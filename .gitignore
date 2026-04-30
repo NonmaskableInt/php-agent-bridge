@@ -1,0 +1,26 @@
+# Claude Code local settings (may contain server IPs, internal paths)
+.claude/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# WordPress logs
+*.log
+wp-content/debug.log
+
+# Composer (not used here, but future-proof)
+vendor/
+
+# Node (not used here, but future-proof)
+node_modules/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
