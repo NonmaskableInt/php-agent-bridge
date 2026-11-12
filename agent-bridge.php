@@ -78,6 +78,15 @@ if ( defined( 'AGENT_BRIDGE_LOG_REQUESTS' ) && AGENT_BRIDGE_LOG_REQUESTS ) {
     } );
 }
 
+// Headless mode: CORS allowlist, front-end redirect, preview links.
+\AgentBridge\Headless\Runtime::boot();
+
+// Custom post types / taxonomies / meta defined through the content model.
+\AgentBridge\ContentModel\Runtime::boot();
+
+// Serve deployed apps at their mount paths (runs before WordPress templating).
+add_action( 'template_redirect', [ \AgentBridge\Apps\Server::class, 'maybe_serve' ], 0 );
+
 // -------------------------------------------------------------------------
 // Route Registration
 // -------------------------------------------------------------------------
@@ -93,6 +102,10 @@ add_action( 'rest_api_init', function (): void {
     \AgentBridge\Routes\ThemesRoute::register();
     \AgentBridge\Routes\CliRoute::register();
     \AgentBridge\Routes\DatabaseRoute::register();
+    \AgentBridge\Routes\FilesRoute::register();
+    \AgentBridge\Routes\AppsRoute::register();
+    \AgentBridge\Routes\HeadlessRoute::register();
+    \AgentBridge\Routes\ContentModelRoute::register();
 
     // Optional WooCommerce module — loaded only when WooCommerce is active
     if ( class_exists( 'WooCommerce' ) ) {

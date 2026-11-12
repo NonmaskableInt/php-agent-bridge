@@ -1,0 +1,36 @@
+# Throwaway validation stack for php-agent-bridge. Not for production.
+name: agent-bridge-dev
+services:
+  db:
+    image: docker.io/library/mariadb:11
+    environment:
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp
+      MARIADB_ROOT_PASSWORD: root
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      retries: 30
+  wp:
+    image: docker.io/library/wordpress:6-php8.3-apache
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8088:80"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wp
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_ENVIRONMENT_TYPE', 'local');
+        define('AGENT_BRIDGE_LOG_REQUESTS', true);
+        define('AGENT_BRIDGE_ALLOW_FILE_WRITE', true);
+    volumes:
+      - wpdata:/var/www/html
+      - ../:/var/www/html/wp-content/plugins/php-agent-bridge:ro
+      - ./php-dev.ini:/usr/local/etc/php/conf.d/zz-dev.ini:ro
+volumes:
+  wpdata:
