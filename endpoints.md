@@ -778,6 +778,51 @@ There are no block templates. `GET /templates` returns `files` — each with `fi
 
 ---
 
+## Theme tools (validation)
+
+Read-only checks so an agent can verify what it wrote **before trusting or activating it**. WordPress's own parsers are forgiving: broken block markup renders as something odd, an invalid `theme.json` is silently ignored, a missing template part shows nothing. These report it. Need `manage_options`; nothing is written.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/theme-tools/validate?stylesheet=` | Validate an installed theme (default: the active one) |
+| `POST` | `/theme-tools/validate-markup` | `{ "content": "<!-- wp:… -->" }` — check block markup without saving |
+
+`POST /templates/item` also returns the markup check as `validation` (the template is saved either way, like the Site Editor).
+
+### Result
+```json
+{ "stylesheet": "my-theme", "theme_type": "block", "valid": false,
+  "errors":   [ { "code": "missing_template_part", "level": "error", "message": "…", "file": "templates/single.html", "line": 1 } ],
+  "warnings": [ … ], "checked": { "files": 14 } }
+```
+`valid` is true when there are no errors; warnings never fail validation.
+
+### Block markup checks
+| Code | Level | Meaning |
+|------|-------|---------|
+| `unclosed_block`, `unexpected_closer`, `mismatched_closer` | error | Delimiters do not balance |
+| `invalid_attributes` | error | The `{…}` attributes are not a valid JSON object |
+| `unregistered_block` | warning | Block name not registered (misspelt, or its plugin is inactive) |
+| `freeform_content` | warning | HTML outside any block |
+
+### Theme checks
+| Code | Level | Meaning |
+|------|-------|---------|
+| `missing_theme_header` | error | `style.css` has no `Theme Name:` |
+| `missing_index_template` | error | Block theme: `templates/index.html`; classic: `index.php` |
+| `missing_parent_theme` / `parent_is_child` | error | A child theme's parent is absent, or is itself a child |
+| `missing_template_part` | error | A template references `parts/<slug>.html` that does not exist |
+| `invalid_theme_json` | error | `theme.json` is not valid JSON (WordPress ignores the whole file) |
+| `php_lint_failed` | error | A theme PHP file has a syntax error |
+| `unknown_theme_json_key`, `unsupported_theme_json_version` | warning | Ignored key / version other than 1–3 |
+| `ignored_theme_json_property` | warning | A `settings`/`styles` property WordPress's sanitiser drops (lists are not compared) |
+| `pattern_missing_header` | warning | A `patterns/*.php` file lacks `Title:` / `Slug:` |
+| `lint_unavailable` | warning | PHP could not be run to check syntax |
+
+A theme counts as a block theme if it has `theme.json` or `templates/*.html`, even when `templates/index.html` is missing (which is then reported). At most 200 files are checked per kind.
+
+---
+
 ## Global Error Codes
 
 | Code | HTTP | Meaning |

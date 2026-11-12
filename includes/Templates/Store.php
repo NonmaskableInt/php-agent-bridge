@@ -183,7 +183,10 @@ class Store {
             return self::fail( 'template_write_failed', 'WordPress accepted the write but the template cannot be read back.', 500 );
         }
         Backups::audit( WP_CONTENT_DIR, $audit_action, "{$type['name']}:{$full}", [ 'bytes' => strlen( $content ), 'created' => $existing === null ] );
-        return [ 'ok' => true, 'template' => self::describe( $saved, $type['name'] ), 'created' => $existing === null ];
+        // Saved regardless (like the Site Editor), but the problems are reported straight away.
+        $described               = self::describe( $saved, $type['name'] );
+        $described['validation'] = \AgentBridge\Themes\BlockMarkup::check( $content );
+        return [ 'ok' => true, 'template' => $described, 'created' => $existing === null ];
     }
 
     /**

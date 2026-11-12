@@ -85,6 +85,8 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 
 `includes/Routes/TemplatesRoute.php` + `includes/Templates/` — what renders a page, and block-template overrides. `Store` reads with WordPress's resolver and writes through core's REST controllers (`rest_do_request`) so Site-Editor behaviour cannot drift; `Resolver` + `resolve-worker.php` answer "which template renders this URL" in a separate CLI process (it sets `$_GET` and server vars, and removes `template_redirect` actions so canonical/headless redirects do not interfere); `Classic` lists a classic theme's PHP template files. Key idea: a database override masks the theme file, so everything reports `source` and `masks_theme_file`.
 
+`includes/Routes/ThemeToolsRoute.php` + `includes/Themes/` — read-only validators. `BlockMarkup` checks the `<!-- wp:… -->` syntax with its own tokenizer (balance, JSON attributes, unregistered blocks, free-form HTML) because WordPress's parser silently accepts broken markup; `Validator` checks a theme's structure, `theme.json` (including which properties WordPress's sanitiser drops, found by diffing against `WP_Theme_JSON`), template-part references, and PHP syntax. `template_set` returns the markup check as `validation`.
+
 ## Configuration Constants
 
 Define in `wp-config.php`:
