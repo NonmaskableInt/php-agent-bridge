@@ -2,6 +2,7 @@
 
 namespace AgentBridge\Routes;
 
+use AgentBridge\AltAuth;
 use AgentBridge\Auth;
 use AgentBridge\Files\PhpGuard;
 use AgentBridge\Options\Registry as OptionRegistry;
@@ -59,6 +60,7 @@ class StatusRoute {
                 'content_model'      => ! $flag( 'AGENT_BRIDGE_DISABLE_CONTENT_MODEL' ),
                 'option_groups'      => OptionRegistry::legacy_allowlist() === null ? OptionRegistry::enabled_groups() : [],
                 'legacy_option_list' => OptionRegistry::legacy_allowlist() !== null,
+                'alt_auth_header'    => AltAuth::enabled(),
                 'backup_dir'         => $backup ? 'custom' : 'default',
                 // PHP writes and template resolving need a php binary and proc_open; shared hosts sometimes lack them.
                 'php_verification'   => PhpGuard::php_binary() !== null && function_exists( 'proc_open' ),

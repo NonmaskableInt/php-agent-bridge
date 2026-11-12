@@ -28,6 +28,8 @@ All endpoints use WordPress Application Passwords:
 Authorization: Basic base64(username:app_password)
 ```
 
+If a network between the caller and the site strips the `Authorization` header (some egress proxies and CGI setups do), send the same value as `X-Agent-Authorization` instead. It is only used when the request has no `Authorization` of its own, still has to be a valid application password, and only applies to REST requests. Turn it off with `define( 'AGENT_BRIDGE_DISABLE_ALT_AUTH', true );`. `GET /status` reports `features.alt_auth_header`.
+
 ## Configuration
 
 Define in `wp-config.php`:

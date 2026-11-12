@@ -1,7 +1,7 @@
 # Agent Bridge — API Endpoints
 
 **Base URL:** `/wp-json/agent/v1`
-**Auth:** `Authorization: Basic base64(username:app_password)` (WordPress Application Passwords)
+**Auth:** `Authorization: Basic base64(username:app_password)` (WordPress Application Passwords). Fallback for networks that strip that header: the same value in `X-Agent-Authorization` (used only when no `Authorization` is present; disable with `AGENT_BRIDGE_DISABLE_ALT_AUTH`).
 **Idempotency:** Pass `X-Idempotency-Key: <uuid>` on any mutating request to enable replay-safe retries (24 h TTL).
 
 All responses use a consistent envelope:
