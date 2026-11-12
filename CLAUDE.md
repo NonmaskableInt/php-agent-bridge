@@ -6,16 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A WordPress plugin (`agent-bridge.php`) that exposes a structured, agent-friendly REST API at the `agent/v1` namespace. Every write operation is idempotent via the `X-Idempotency-Key` header. All responses follow a consistent `{ ok: bool, data/code/message }` envelope.
 
-There is no build step and no Composer. Validation runs against a throwaway WordPress in containers (`dev/`), driven by the contract tests in the sibling `wp-agent-mcp` repo:
+There is no build step and no Composer. Validation runs against a throwaway WordPress in containers (`dev/`), driven by the contract tests in the sibling `wp-agent-mcp` repo. Needs `podman` or `docker` (with compose) and Node 20+.
 
 ```bash
-podman compose -f dev/compose.yaml up -d        # WP + MariaDB on 127.0.0.1:8088
+dev/run-contract-tests.sh ../wp-agent-mcp        # builds the stack, runs every test, tears it down
+KEEP_STACK=1 dev/run-contract-tests.sh ../wp-agent-mcp tests/contract/files.test.ts   # one file, keep the containers
+
+# or by hand:
+podman compose -f dev/compose.yaml up -d        # WP + MariaDB on 127.0.0.1:8088 (containers: agent-bridge-dev-wp / -db)
 dev/bootstrap.sh                                # installs WP, activates the bridge, prints an app password
 cd ../wp-agent-mcp && BRIDGE_TEST_URL=http://127.0.0.1:8088 BRIDGE_TEST_USER=agent \
-  BRIDGE_TEST_PASSWORD='<app password>' BRIDGE_TEST_CONTAINER=agent-bridge-dev_wp_1 npx vitest run
-# BRIDGE_TEST_CONTAINER is optional: it enables the tests that write hostile data straight into the DB
+  BRIDGE_TEST_PASSWORD='<app password>' BRIDGE_TEST_CONTAINER=agent-bridge-dev-wp npx vitest run
+# BRIDGE_TEST_CONTAINER is optional: it enables the tests that edit wp-config.php or write hostile data into the DB
 podman compose -f dev/compose.yaml down -v      # discard everything
 ```
+
+`CONTAINER_CLI=docker` (or `podman`) selects the runtime; the default is podman if installed, else docker. **CI** (`.github/workflows/ci.yml`) lints every PHP file on PHP 8.0–8.4 and runs the same script against `wp-agent-mcp` — the branch with the same name as the PR's if it exists, otherwise `main`, so paired PRs test each other.
 
 `WORDPRESS_CONFIG_EXTRA` in `dev/compose.yaml` only applies when `wp-config.php` is first created — after changing it, rebuild with `down -v`. The stack enables `AGENT_BRIDGE_ALLOW_FILE_WRITE`; production defaults stay off. `dev/php-dev.ini` sets `opcache.revalidate_freq=0` so PHP edits take effect immediately (with PHP's default of 2s, a test run right after an edit can silently run the old code — this makes mutation checks unreliable).
 
