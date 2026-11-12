@@ -496,6 +496,215 @@ Loaded automatically when WooCommerce is active. All order routes require `manag
 
 ---
 
+## Files
+
+**Writes disabled by default.** Enable via:
+```php
+define('AGENT_BRIDGE_ALLOW_FILE_WRITE', true);
+```
+
+Reads need `manage_options`. Writes additionally need `edit_themes` (themes), `edit_plugins` (plugins, mu-plugins), or `manage_options` **and `unfiltered_html`** (`agent-apps`, because app scripts run with the site's own origin; WordPress withholds `unfiltered_html` from multisite site admins and when `DISALLOW_UNFILTERED_HTML` is set). Writes, deletes, restores and app deploys are refused when `DISALLOW_FILE_MODS` **or** `DISALLOW_FILE_EDIT` is set — there is no exemption for `agent-apps`, because JavaScript is code.
+
+All paths are relative to `wp-content` and limited to the roots `themes`, `plugins`, `mu-plugins` and `agent-apps`. `wp-admin`, `wp-includes`, `wp-config.php`, symlinks, traversal (`..`) and the bridge plugin's own directory are never accessible.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/files?path=` | List a directory (no `path` lists the roots) |
+| `GET` | `/files/content?path=` | Read a file — `{ content, encoding, size, sha256 }` (2 MB limit) |
+| `POST` | `/files/content` | Create or replace a file |
+| `DELETE` | `/files?path=&recursive=` | Delete a file (backed up) or, with `recursive=true`, a directory |
+| `GET` | `/files/backups?path=` | List stored previous versions, newest first |
+| `POST` | `/files/restore` | Restore a backup (latest unless `backup_id` given) |
+
+### POST /files/content — body schema
+```json
+{
+  "path": "themes/my-theme/functions.php",
+  "content": "<?php ...",
+  "encoding": "utf8",
+  "expected_sha256": "optional — fail with 409 if the file changed since this hash"
+}
+```
+`encoding` is `utf8` (default) or `base64` (required for binary files). Max 5 MB.
+
+### Write pipeline
+1. Path jail, root and extension allowlist (`php js mjs css json html htm txt md xml svg map twig png jpg jpeg gif webp ico woff woff2 ttf webmanifest`). `.htaccess`, `.user.ini`, `php.ini`, `.htpasswd` and `wp-config.php` are never writable. PHP is not allowed inside `agent-apps`. A script extension (`php php3-8 phtml pht phps phar`) in **any** position of the name is refused, so `avatar.php.png` cannot be used to slip past the allowlist on servers that execute multi-extension names.
+2. **PHP only:** `php -l` lint of the new content — `php_lint_failed` on a syntax error, file untouched.
+3. The previous version is copied to the backup directory (20 kept per file) — see *Backup directory* below.
+4. The new file is swapped in atomically.
+5. **PHP only:** WordPress is booted in a separate PHP process. If it no longer boots, the change is rolled back and `health_check_failed` is returned with the PHP error.
+6. The action is appended to `audit.log` in the backup directory.
+
+If PHP or `proc_open` is unavailable the bridge refuses PHP writes (`verification_unavailable`) rather than write unverified code.
+
+**Known limit:** a PHP file is live for the duration of one WordPress boot (typically under a second) before the health check completes. A bad file is removed immediately after, but a request in that window can see the fault.
+
+### Backup directory
+Backups hold full source code, so they are kept out of reach of the web server:
+
+- Set `AGENT_BRIDGE_BACKUP_DIR` to a directory **outside the web root** (recommended).
+- Otherwise the bridge creates `wp-content/agent-bridge-<32 random hex>` once and remembers it. The name is unguessable, it contains `.htaccess` (Apache), `web.config` (IIS) and `index.php` (no listings), and these are re-created if they go missing. Protection therefore does not depend on the web server honouring `.htaccess` (it does not on nginx).
+- It holds `audit.log`, the per-file backups and, when `AGENT_BRIDGE_LOG_REQUESTS` is on, `requests.log`.
+- A `wp-content/agent-bridge-backups/` or `wp-content/agent-bridge.log` left by an earlier version is migrated into it automatically, so nothing remains at a guessable path.
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `file_write_disabled` | 403 | `AGENT_BRIDGE_ALLOW_FILE_WRITE` is not true |
+| `file_edit_disabled` | 403 | `DISALLOW_FILE_EDIT` or `DISALLOW_FILE_MODS` is set |
+| `path_not_allowed` | 403 | Outside the allowed roots, protected, or a disallowed file type |
+| `file_not_found` | 404 | Path does not exist |
+| `backup_not_found` | 404 | No such backup |
+| `conflict` | 409 | `expected_sha256` did not match |
+| `path_in_use` | 409 | Directory is the active theme or an active plugin |
+| `file_too_large` | 413 | Over the read / write size limit |
+| `php_lint_failed` | 422 | PHP syntax error; nothing was written |
+| `health_check_failed` | 422 | WordPress failed to boot; change rolled back |
+| `verification_unavailable` | 503 | PHP binary / `proc_open` unavailable; PHP write refused |
+
+---
+
+## Apps
+
+Deploy a built front-end (React, Vue, plain static) onto the site and serve it at a mount path. **Disabled unless `AGENT_BRIDGE_ALLOW_FILE_WRITE` is true**; also refused when `DISALLOW_FILE_MODS` or `DISALLOW_FILE_EDIT` is set. Deploy, rollback and delete need `manage_options` **and `unfiltered_html`** (app scripts run on the site's own origin). Reads need `manage_options`.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/apps` | List apps: mount, URL, live release |
+| `GET` | `/apps/{slug}` | One app plus its stored releases (newest first) |
+| `POST` | `/apps/deploy` | Upload a zip as a new release and make it live |
+| `POST` | `/apps/{slug}/rollback` | Make an earlier release live (previous one unless `release_id` given) |
+| `DELETE` | `/apps/{slug}` | Stop serving, then delete the app and all releases |
+
+### POST /apps/deploy — body schema
+```json
+{
+  "slug": "dashboard",
+  "mount": "/app",
+  "archive_base64": "<base64 of a zip of the build output>",
+  "spa": true,
+  "allow_root": false
+}
+```
+- `slug`: lowercase letters, digits, `-` (max 41 chars). Redeploying the same slug creates a new release.
+- `mount`: URL path to serve at (`/app`, `/apps/dashboard`). `/` replaces the whole front end and requires `allow_root: true`.
+- `spa`: serve `index.html` for unknown extension-less paths (client-side routing). Unknown paths **with** a file extension return 404 (on a root mount they fall through to WordPress).
+- Archive limit 20 MB (also bounded by PHP `post_max_size`); expands to at most 50 MB, 5000 files, 10 MB per file.
+- A single wrapper directory (e.g. `dist/`) is stripped. `index.html` must be at the bundle root.
+
+### Bundle validation (all checked before anything is extracted)
+Rejected with `archive_rejected` and nothing served: path traversal (`..`), absolute or backslash paths, symlinks, hidden files (`.env`, `.git/…`), PHP and any extension outside the allowlist, `.htaccess`. `__MACOSX/` and `.DS_Store` are dropped silently. Real bytes written are counted while extracting, so a zip that lies about its size is cut off.
+
+### Serving
+Static files only, from the live release, via `template_redirect` (priority 0). `wp-admin`, `wp-json`, `wp-login.php`, `wp-content`, `wp-includes`, `xmlrpc.php` and other WordPress entry points are never intercepted, and an app cannot be mounted on them (`mount_reserved`). Responses carry `X-Content-Type-Options: nosniff`; `index.html` is `no-cache`, files under `assets/` are `immutable`; SVGs are sent with a sandboxing CSP. Dotfiles and `..` segments are never served.
+
+### Releases
+Each deploy is an immutable directory under `wp-content/agent-apps/{slug}/releases/`; going live is a single option update, so deploys are atomic and rollback is instant. The 5 newest releases are kept (never the live one). Release ids sort chronologically.
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `mount_reserved` | 422 | Mount is a WordPress path |
+| `root_mount_requires_allow_root` | 422 | `/` needs `allow_root: true` |
+| `mount_in_use` | 409 | Another app owns this mount |
+| `archive_invalid` | 422 | Not a valid zip |
+| `archive_rejected` | 422 | Contains disallowed entries (listed in the message) |
+| `archive_too_large` | 413 | Over a size or file-count limit |
+| `app_index_missing` | 422 | No `index.html` at the bundle root |
+| `app_not_found` | 404 | No such app |
+| `release_not_found` | 404 | No such release |
+| `no_previous_release` | 409 | Nothing earlier to roll back to |
+
+---
+
+## Headless
+
+Turn WordPress into a headless CMS for a separate front end (a React app deployed with `/apps`, or any other origin). Changes site options only, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. `GET/PATCH /headless` need `manage_options`; every change is written to `audit.log` in the backup directory.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/headless` | Current config plus live status (`site_origin`, `rest_url`, `cors_active`, `redirect_active`) |
+| `PATCH` | `/headless` | Change settings. Partial; the whole result is validated and nothing is saved unless all of it is valid |
+| `GET` | `/headless/preview-link?post_id=` | Preview URL for a post (`edit_posts`; needs `edit_post` on that post) |
+
+### PATCH /headless — body schema
+```json
+{
+  "frontend_url": "https://app.example.com",
+  "cors_origins": ["https://app.example.com", "http://localhost:5173"],
+  "redirect_frontend": true,
+  "redirect_status": 302,
+  "preview": true
+}
+```
+Unknown keys are rejected. `frontend_url: null` clears it.
+
+| Setting | Meaning |
+|---------|---------|
+| `cors_origins` | Exact origins (max 20) that may call the REST API from a browser. No wildcard, `null`, path, query or credentials. **Empty list = WordPress default behaviour** (core reflects any origin). Once set, only listed origins get CORS headers (`Vary: Origin`; methods incl. preflight; `Authorization`, `Content-Type`, `X-Idempotency-Key` allowed; `X-WP-Total`, `X-WP-TotalPages`, `Link` exposed). Credentials/cookies are not allowed cross-origin — use Application Passwords. |
+| `frontend_url` | Where the front end lives. http(s), no credentials/query/fragment, optional path. Not this site's own root. |
+| `redirect_frontend` | Send public pages (`GET`/`HEAD`) to `frontend_url` + the same path and query, with `redirect_status` (301/302). Requires a `frontend_url` on a **different origin** (a same-origin target can loop). Never redirected: `wp-admin`, `wp-login.php`, REST, `robots.txt`, sitemaps, embeds, trackbacks, and apps deployed with `/apps` (they are served first). |
+| `preview` | The editor Preview button opens `<frontend_url>/preview?post_id=…&post_type=…&status=…` (default on). Without a `frontend_url` the normal WordPress preview is used. |
+
+**Lock-out note:** turning the redirect on with a front end that is down makes the public site unreachable. `wp-admin` and the REST API are never redirected, so it can always be switched off with `PATCH /headless {"redirect_frontend": false}`.
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `validation_error` | 422 | Unknown setting, wrong type, invalid origin/URL, empty patch |
+| `frontend_url_required` | 409 | Redirect enabled (or `frontend_url` cleared while enabled) without a front end |
+| `frontend_same_origin` | 409 | `frontend_url` is this site's own root, or a same-origin target with the redirect on |
+| `post_not_found` | 404 | Preview link for a post that does not exist |
+
+---
+
+## Content model
+
+Define custom post types, taxonomies and typed meta fields **as data**. They are registered on every request with REST forced on, so a headless front end can use them immediately at `/wp-json/wp/v2/<rest_base>` (create, read, update, delete through WordPress core REST, with terms and typed `meta`). No PHP file is written, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. All routes need `manage_options`; changes are written to `audit.log` in the backup directory.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/content-model` | `{ post_types, taxonomies, meta, warnings }` |
+| `POST` | `/content-model/post-types/{slug}` | Create or update a post type |
+| `DELETE` | `/content-model/post-types/{slug}` | Remove the definition (posts stay in the database; `orphaned_posts` reports how many) |
+| `POST` | `/content-model/taxonomies/{slug}` | Create or update a taxonomy |
+| `DELETE` | `/content-model/taxonomies/{slug}` | Remove the definition (term data stays) |
+| `POST` | `/content-model/meta/{key}` | Create or update a typed meta field |
+| `DELETE` | `/content-model/meta/{key}` | Remove the definition (stored values stay) |
+
+### Post type fields (`label` required)
+`label`, `singular_label`, `description` (≤200), `public` (default true), `hierarchical`, `has_archive`, `supports` (from `title editor author thumbnail excerpt trackbacks custom-fields comments revisions page-attributes post-formats`; default `["title","editor"]`), `taxonomies` (slugs), `rest_base` (default: the slug), `menu_icon` (`dashicons-*` only), `menu_position` (5–100), `rewrite_slug`.
+
+### Taxonomy fields (`label` required)
+`label`, `singular_label`, `object_types` (post type slugs), `hierarchical`, `rest_base`, `public`.
+
+### Meta fields (`post_types` required)
+`post_types` (non-empty list), `type` (`string integer number boolean array`), `items_type` (for arrays: `string integer number boolean`), `single`, `description`, `default` (scalars only, must match `type`). Values are validated by type over REST (a string sent to an integer field is a `400`), and the post types automatically gain `custom-fields` support so the field appears in the `meta` object.
+
+### Rules
+- Slugs: lowercase letters, digits, `_`/`-`, start with a letter, max 20. Meta keys: lowercase, max 64, no leading `_` (private in WordPress) and not `wp_`-prefixed.
+- Core types (`post`, `page`, `attachment`, `wp_template`, …), core taxonomies (`category`, `post_tag`, …) and core REST bases (`posts`, `users`, `types`, …) cannot be used. A slug or REST base already served by a theme or plugin is refused (`slug_in_use`, `rest_base_in_use`).
+- **Strict:** unknown fields and wrong types are rejected (`422`), and nothing is saved unless the whole definition is valid.
+- Taxonomy REST fields on posts are named after the taxonomy's **`rest_base`**, not its slug.
+- Rewrite rules are flushed automatically on the request after any change.
+- Dangling references (a type naming a taxonomy that is not registered, etc.) are reported in `warnings`, not rejected, so definitions can be created in any order.
+- Limits: 30 post types, 30 taxonomies, 100 meta fields.
+- **Runtime safety does not trust stored data:** core names and `wp_` meta are filtered out when the model is *read*, so even a bad database value cannot redefine WordPress core. A corrupt option is ignored, never fatal.
+- Emergency off switch: `define('AGENT_BRIDGE_DISABLE_CONTENT_MODEL', true);` registers nothing.
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `validation_error` | 422 | Bad slug/key, wrong type, unknown field, missing label |
+| `slug_reserved` | 422 | WordPress core type/taxonomy |
+| `slug_in_use` | 409 | Already registered by something else |
+| `rest_base_reserved` | 422 | Core REST base |
+| `rest_base_in_use` | 409 | REST base already served for another type/taxonomy |
+| `limit_reached` | 409 | Too many definitions |
+| `not_found` | 404 | Not in the content model |
+
+---
+
 ## Global Error Codes
 
 | Code | HTTP | Meaning |
@@ -574,6 +783,16 @@ define('AGENT_BRIDGE_CLI_OPEN', false);
 // WP-CLI: custom allowlist (used in allowlist mode only)
 define('AGENT_BRIDGE_CLI_ALLOWLIST', ['cache flush', 'cron event run --due-now']);
 
+// Where backups, audit.log and requests.log live. Point this OUTSIDE the web root.
+// Default: wp-content/agent-bridge-<random> (unguessable, with deny rules).
+define('AGENT_BRIDGE_BACKUP_DIR', '/var/lib/agent-bridge');
+
+// File writes under wp-content/{themes,plugins,mu-plugins,agent-apps} (disabled by default)
+define('AGENT_BRIDGE_ALLOW_FILE_WRITE', false);
+
+// Stop registering the stored content model (post types, taxonomies, meta) — emergency switch
+define('AGENT_BRIDGE_DISABLE_CONTENT_MODEL', false);
+
 // Database API (disabled by default)
 define('AGENT_BRIDGE_DB_API', false);
 define('AGENT_BRIDGE_DB_ALLOW_DDL', false); // enables DROP TABLE, TRUNCATE, ALTER, CREATE
@@ -581,6 +800,6 @@ define('AGENT_BRIDGE_DB_ALLOW_DDL', false); // enables DROP TABLE, TRUNCATE, ALT
 // Idempotency TTL in seconds (default 24 h)
 define('AGENT_BRIDGE_IDEMPOTENCY_TTL', 86400);
 
-// Request logging to wp-content/agent-bridge.log
+// Request logging to requests.log in the backup directory (not web-served)
 define('AGENT_BRIDGE_LOG_REQUESTS', true);
 ```

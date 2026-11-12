@@ -67,8 +67,9 @@ if ( defined( 'AGENT_BRIDGE_LOG_REQUESTS' ) && AGENT_BRIDGE_LOG_REQUESTS ) {
                     $request->get_route(),
                     get_current_user_id()
                 );
+                // Not under a fixed, web-reachable name: see Files\Backups::dir().
                 file_put_contents(
-                    WP_CONTENT_DIR . '/agent-bridge.log',
+                    \AgentBridge\Files\Backups::dir( WP_CONTENT_DIR ) . '/requests.log',
                     $log_line,
                     FILE_APPEND | LOCK_EX
                 );
@@ -77,6 +78,15 @@ if ( defined( 'AGENT_BRIDGE_LOG_REQUESTS' ) && AGENT_BRIDGE_LOG_REQUESTS ) {
         }, 10, 3 );
     } );
 }
+
+// Headless mode: CORS allowlist, front-end redirect, preview links.
+\AgentBridge\Headless\Runtime::boot();
+
+// Custom post types / taxonomies / meta defined through the content model.
+\AgentBridge\ContentModel\Runtime::boot();
+
+// Serve deployed apps at their mount paths (runs before WordPress templating).
+add_action( 'template_redirect', [ \AgentBridge\Apps\Server::class, 'maybe_serve' ], 0 );
 
 // -------------------------------------------------------------------------
 // Route Registration
@@ -93,6 +103,10 @@ add_action( 'rest_api_init', function (): void {
     \AgentBridge\Routes\ThemesRoute::register();
     \AgentBridge\Routes\CliRoute::register();
     \AgentBridge\Routes\DatabaseRoute::register();
+    \AgentBridge\Routes\FilesRoute::register();
+    \AgentBridge\Routes\AppsRoute::register();
+    \AgentBridge\Routes\HeadlessRoute::register();
+    \AgentBridge\Routes\ContentModelRoute::register();
 
     // Optional WooCommerce module — loaded only when WooCommerce is active
     if ( class_exists( 'WooCommerce' ) ) {
