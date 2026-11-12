@@ -731,6 +731,53 @@ Define custom post types, taxonomies and typed meta fields **as data**. They are
 
 ---
 
+## Templates
+
+Find out **what renders a page**, and manage block-theme template overrides.
+
+> **The trap this solves.** In a block theme, anything saved in the Site Editor is stored in the *database* and **overrides the theme's template file**. Editing `templates/single.html` can then appear to do nothing. `template_list` / `template_resolve` show `source: "custom"` and `masks_theme_file: true` when that is happening, and `template_get` returns the hidden file content (`theme_content`).
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/templates?type=template\|part` | Block themes: templates (or parts) with their source. Classic themes: PHP template `files` |
+| `GET` | `/templates/item?id=&type=` | One template: block markup, plus `theme_content` when an override hides a theme file |
+| `POST` | `/templates/item` | Create or update a template/part in the database (an override when the theme ships one) |
+| `DELETE` | `/templates/item?id=&type=` | Remove an override (back to the theme file) or delete a custom-only template. Backed up first |
+| `POST` | `/templates/resolve` | `{ "url": "/?p=12" }` — which template WordPress renders for that URL |
+| `GET` | `/templates/backups` | Saved copies of removed overrides, newest first |
+| `POST` | `/templates/restore` | `{ "name": "<backup>" }` — bring one back |
+
+Reads need `manage_options`; changes also need `edit_theme_options`. Writes go through WordPress's own REST controllers, so sanitising (kses for users without `unfiltered_html`) and term assignment are core's, exactly as in the Site Editor. No files are written, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. Changes are audit-logged.
+
+### Template object (block themes)
+`id` (`theme//slug`), `slug`, `type` (`template`\|`part`), `title`, `description`, `source` (`theme`\|`custom`), `origin`, `is_custom` (no theme file exists), `has_theme_file`, **`masks_theme_file`** (a database override hides the theme file), `wp_id` (the post id of the override, else `null`), `modified`, and `area` for parts.
+
+### POST /templates/item — body
+```json
+{ "id": "single", "type": "template", "content": "<!-- wp:group -->…", "title": "Single post", "description": "…" }
+```
+`id` is a slug or `theme//slug` of the **active theme only**. A slug the theme does not ship creates a custom template. Parts accept `area` (`header`, `footer`, `uncategorized`). `content` (block markup) is limited to 500000 bytes; `title` to 100, `description` to 300. Unknown fields are rejected (`422`).
+
+### POST /templates/resolve
+Runs WordPress in a separate PHP process (like the file health check), so it cannot affect the request. It reports what WordPress itself would render: `{ is_block, type, hierarchy, template_id, slug, source, masks_theme_file, file }`. `type` is the hierarchy that **matched** (a category with no `category.html` reports `archive`). Block themes return `template_id`; classic themes return `file`. The site's own redirects (canonical URLs, the headless redirect, deployed apps) are deliberately not followed. `url` is a path/query or a full URL on this site; other hosts, scheme-relative URLs, control characters and URLs over 2000 characters are refused.
+
+### Classic themes
+There are no block templates. `GET /templates` returns `files` — each with `file`, `kind` (`template`, `part`, `page_template` with its `name`, `functions`), the owning `theme` (child or parent) and a `path` for the `/files` API. `GET/POST/DELETE /templates/item` answer `not_block_theme`; edit the PHP with `/files` (linted, backed up, health-checked).
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `not_block_theme` | 409 | The active theme is a classic theme |
+| `template_not_found` | 404 | No such template/part in the active theme |
+| `no_override` | 409 | Reset requested but the template comes from the theme file |
+| `wrong_theme` | 422 | The id names a theme other than the active one |
+| `validation_error` | 422 | Bad id/type/area/field, or content too large |
+| `backup_not_found` | 404 | No such backup |
+| `resolve_failed` | 500 | WordPress could not resolve that URL (detail in the message) |
+| `insufficient_capability` | 403 | Writing needs `edit_theme_options` |
+
+---
+
 ## Global Error Codes
 
 | Code | HTTP | Meaning |

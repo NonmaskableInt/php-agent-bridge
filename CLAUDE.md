@@ -83,6 +83,8 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 
 `includes/Options/` + `includes/Routes/OptionsRoute.php` — typed, grouped site options. `Registry` holds the groups, a typed spec per key, the never-settable list (with reasons) and which groups are enabled (`AGENT_BRIDGE_OPTION_GROUPS`); `Validator` checks values. Writes are two-phase (validate every key and collect every error, then apply), so a bad value never leaves a half-applied batch. Plain permalinks are refused because they remove `/wp-json/`, the endpoint the agent itself uses.
 
+`includes/Routes/TemplatesRoute.php` + `includes/Templates/` — what renders a page, and block-template overrides. `Store` reads with WordPress's resolver and writes through core's REST controllers (`rest_do_request`) so Site-Editor behaviour cannot drift; `Resolver` + `resolve-worker.php` answer "which template renders this URL" in a separate CLI process (it sets `$_GET` and server vars, and removes `template_redirect` actions so canonical/headless redirects do not interfere); `Classic` lists a classic theme's PHP template files. Key idea: a database override masks the theme file, so everything reports `source` and `masks_theme_file`.
+
 ## Configuration Constants
 
 Define in `wp-config.php`:

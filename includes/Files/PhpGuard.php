@@ -49,7 +49,7 @@ class PhpGuard {
     }
 
     /** @return array{code:int,out:string,err:string} */
-    private static function run( array $argv, int $timeout ): array {
+    public static function run( array $argv, int $timeout ): array {
         $proc = proc_open( $argv, [ 1 => [ 'pipe', 'w' ], 2 => [ 'pipe', 'w' ] ], $pipes );
         if ( ! is_resource( $proc ) ) {
             return [ 'code' => -1, 'out' => '', 'err' => 'proc_open failed' ];
