@@ -97,6 +97,8 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 
 `includes/Themes/Scaffold.php` (route: `ThemeToolsRoute::scaffold`) — creates block, classic or child themes. Writes to a hidden `.agent-scaffold-*` staging directory, passes every path through `PathGuard`, lints generated PHP, requires `Validator` to pass, then renames into place; never activates, never overwrites. Gated by `WriteGate` like `/files`. Header fields are rejected if they contain `*/`, `<?`, newlines or control characters (they are written into `style.css`).
 
+`includes/Routes/StatusRoute.php` — `GET /status`: version, route count, WordPress/PHP/theme, enabled features (file writes, DISALLOW_FILE_* blocking, CLI mode, DB API, content model, option groups, whether a custom backup dir is set, whether PHP can be verified) and the caller's capabilities. Used by the MCP server's `bridge_status` / `--check`. Never reports secrets or filesystem paths — a test asserts this.
+
 ## Configuration Constants
 
 Define in `wp-config.php`:
