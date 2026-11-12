@@ -373,6 +373,8 @@ Default allowlist: `cache flush`, `cron event run --due-now`, `rewrite flush`, `
 define('AGENT_BRIDGE_CLI_OPEN', true);
 ```
 
+> **Warning: open mode bypasses every guardrail in this document.** In open mode `wp eval`, `wp eval-file`, `wp shell`, `wp config set`, `wp plugin install <url>`, `wp theme install <url>`, `wp db query` (and any plugin's own subcommands) all run. That is arbitrary PHP and arbitrary database access, **without** the path jail, extension allowlist, PHP lint, backups, boot-test and rollback that `/files` applies, without the `AGENT_BRIDGE_ALLOW_FILE_WRITE` gate, and the code that `wp eval`, `eval-file`, `shell` and `db query` run never consults `DISALLOW_FILE_EDIT` / `DISALLOW_FILE_MODS`, so those constants do not stop it. Only the five commands in the denylist below are blocked. Enabling open mode means trusting the agent with the same power as shell access to the site: do not turn it on if the safety of the PHP backend matters. The default allowlist mode is read-mostly and is what you want.
+
 ### Permanent denylist (always blocked in both modes)
 | Prefix | Reason |
 |--------|--------|
@@ -778,14 +780,15 @@ There are no block templates. `GET /templates` returns `files` — each with `fi
 
 ---
 
-## Theme tools (validation)
+## Theme tools (validation and scaffolding)
 
-Read-only checks so an agent can verify what it wrote **before trusting or activating it**. WordPress's own parsers are forgiving: broken block markup renders as something odd, an invalid `theme.json` is silently ignored, a missing template part shows nothing. These report it. Need `manage_options`; nothing is written.
+Checks so an agent can verify what it wrote **before trusting or activating it**, and one-step theme scaffolding (below). WordPress's own parsers are forgiving: broken block markup renders as something odd, an invalid `theme.json` is silently ignored, a missing template part shows nothing. These report it. The validators need `manage_options` and write nothing; scaffolding writes files and is gated like `/files`.
 
 | Method | Route | Description |
 |--------|-------|-------------|
 | `GET` | `/theme-tools/validate?stylesheet=` | Validate an installed theme (default: the active one) |
 | `POST` | `/theme-tools/validate-markup` | `{ "content": "<!-- wp:… -->" }` — check block markup without saving |
+| `POST` | `/theme-tools/scaffold` | Create a block, classic or child theme (not activated) |
 
 `POST /templates/item` also returns the markup check as `validation` (the template is saved either way, like the Site Editor).
 
@@ -820,6 +823,32 @@ Read-only checks so an agent can verify what it wrote **before trusting or activ
 | `lint_unavailable` | warning | PHP could not be run to check syntax |
 
 A theme counts as a block theme if it has `theme.json` or `templates/*.html`, even when `templates/index.html` is missing (which is then reported). At most 200 files are checked per kind.
+
+
+### POST /theme-tools/scaffold
+```json
+{ "type": "block", "slug": "my-theme", "name": "My Theme", "description": "…", "author": "…" }
+{ "type": "child", "slug": "my-child", "name": "My Child", "parent": "twentytwentyfive" }
+```
+Creates a working theme in one step. **Never activates it** (use `/themes/{stylesheet}/activate`) and **never overwrites** an existing theme (`theme_exists`).
+
+| `type` | Creates |
+|--------|---------|
+| `block` | `style.css`, `theme.json` (palette, typography, layout, header/footer `templateParts` areas), `functions.php`, `templates/{index,single,page,404}.html`, `parts/{header,footer}.html` |
+| `classic` | `style.css`, `functions.php`, `header.php`, `footer.php`, `index.php`, `single.php`, `page.php`, `archive.php`, `search.php`, `404.php` |
+| `child` | `style.css` (with `Template:`) and `functions.php`. A block parent's templates and `theme.json` are inherited; a classic parent's stylesheet is enqueued. The parent must be installed and not itself a child |
+
+- **All-or-nothing.** Files are written to a hidden staging directory (`.agent-scaffold-…`, ignored by WordPress), generated PHP is linted, and the theme must pass the validator above before it is moved into place. A failure leaves nothing behind.
+- `slug`: 2–41 characters, lowercase letters, digits and dashes, starting with a letter. `name` (1–60), `description` (≤200) and `author` (≤60) must be a single line with no control characters, `*/` or `<?`, because they are written into the `style.css` header comment.
+- Unknown fields are rejected. Needs `AGENT_BRIDGE_ALLOW_FILE_WRITE`, the `edit_themes` capability, and is refused when `DISALLOW_FILE_EDIT` / `DISALLOW_FILE_MODS` is set.
+- Returns `{ stylesheet, type, path, files, validation, activated: false }`. Customise afterwards with `/files` (PHP, `theme.json`), `/templates` and `/global-styles`.
+
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `theme_exists` | 409 | A theme with that slug already exists |
+| `parent_not_found` / `parent_is_child` | 422 | The parent is missing, or is itself a child |
+| `scaffold_failed` | 500 | Generation, lint or validation failed; nothing was created |
+| `file_write_disabled` / `file_edit_disabled` | 403 | The file-write opt-in is off, or a `DISALLOW_*` constant is set |
 
 ---
 

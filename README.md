@@ -38,7 +38,7 @@ Define in `wp-config.php`:
 | `AGENT_BRIDGE_BACKUP_DIR` | `wp-content/agent-bridge-<random>` | Where backups, `audit.log` and `requests.log` are kept — set to a path outside the web root |
 | `AGENT_BRIDGE_IDEMPOTENCY_TTL` | `86400` | Idempotency key TTL in seconds |
 | `AGENT_BRIDGE_CLI_ALLOWLIST` | built-in list | Array of allowed WP-CLI command prefixes |
-| `AGENT_BRIDGE_CLI_OPEN` | `false` | Allow any WP-CLI command (denylist-only mode) |
+| `AGENT_BRIDGE_CLI_OPEN` | `false` | Allow any WP-CLI command. **Bypasses every file/PHP guardrail** (`wp eval` and friends run unguarded) — see endpoints.md before enabling |
 | `AGENT_BRIDGE_DB_API` | `false` | Enable `/db/*` endpoints |
 | `AGENT_BRIDGE_DB_ALLOW_DDL` | `false` | Permit DDL statements in DB API |
 
