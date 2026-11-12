@@ -81,6 +81,8 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 
 `includes/Routes/ContentModelRoute.php` — custom post types, taxonomies and typed meta fields defined as data (option `agent_bridge_content_model`), registered on `init` priority 0 by `ContentModel\Runtime` with `show_in_rest` forced on; options only, no file writes. `ContentModel\Model` does strict all-or-nothing validation and, **independently**, filters reserved names when reading (runtime must never trust stored data — a bad DB value must not redefine core). A broken definition is skipped, never fatal. Rewrite rules flush on the request after a change (flag option).
 
+`includes/Options/` + `includes/Routes/OptionsRoute.php` — typed, grouped site options. `Registry` holds the groups, a typed spec per key, the never-settable list (with reasons) and which groups are enabled (`AGENT_BRIDGE_OPTION_GROUPS`); `Validator` checks values. Writes are two-phase (validate every key and collect every error, then apply), so a bad value never leaves a half-applied batch. Plain permalinks are refused because they remove `/wp-json/`, the endpoint the agent itself uses.
+
 ## Configuration Constants
 
 Define in `wp-config.php`:
@@ -92,6 +94,8 @@ Define in `wp-config.php`:
 - `AGENT_BRIDGE_CLI_OPEN` — set `true` to allow any WP-CLI command (denylist-only mode)
 - `AGENT_BRIDGE_ALLOW_FILE_WRITE` — set `true` to enable `/files` writes, deletes and restores (disabled by default)
 - `AGENT_BRIDGE_DISABLE_CONTENT_MODEL` — set `true` to stop registering the stored content model (emergency switch)
+- `AGENT_BRIDGE_OPTION_GROUPS` — option groups exposed (default `general`, `reading`, `discussion`, `media`; also `permalinks`, `site_url`)
+- `AGENT_BRIDGE_ALLOWED_OPTIONS` — legacy explicit key list; replaces the groups when defined
 - `AGENT_BRIDGE_PHP_BINARY` — optional path to the PHP CLI used for lint and health checks (auto-detected otherwise)
 - `AGENT_BRIDGE_DB_API` — set `true` to enable the `/db/*` endpoints (disabled by default)
 - `AGENT_BRIDGE_DB_ALLOW_DDL` — set `true` to permit DDL statements (`DROP TABLE`, `TRUNCATE`, `ALTER TABLE`, `CREATE TABLE`, `RENAME TABLE`)

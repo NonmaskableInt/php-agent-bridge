@@ -137,22 +137,48 @@ Accepts the same body as `/media/upload`. The plugin overwrites the original fil
 
 ## Site Options
 
+Typed, grouped access to site options. Values are **validated**, and a PATCH is **all-or-nothing**: every key is checked (and every problem reported) before anything is written.
+
 | Method | Route | Capability | Description |
 |--------|-------|------------|-------------|
-| `GET` | `/options` | `manage_options` | Get options by key |
+| `GET` | `/options/schema` | `manage_options` | Groups, keys with types and limits, what is enabled, what can never be set |
+| `GET` | `/options` | `manage_options` | Get options by key (typed: integers, booleans) |
 | `PATCH` | `/options` | `manage_options` | Update options |
 
-Keys are restricted to the `AGENT_BRIDGE_ALLOWED_OPTIONS` allowlist (default: `blogname`, `blogdescription`, `siteurl`, `home`, `default_comment_status`, `posts_per_page`).
+### Groups
+Enable groups in `wp-config.php` with `define('AGENT_BRIDGE_OPTION_GROUPS', ['general','reading', ...]);` (default: the first four).
 
-### GET /options — query params
-| Param | Type | Notes |
-|-------|------|-------|
-| `keys[]` | string (repeatable) | e.g. `?keys[]=blogname&keys[]=siteurl`. Omit to return all allowlisted options. |
+| Group | Default | Keys |
+|-------|---------|------|
+| `general` | on | `blogname` (1–200), `blogdescription` (0–300), `timezone_string` (IANA id), `date_format`, `time_format`, `start_of_week` (0–6), `posts_per_page` (1–100), `posts_per_rss` (1–100) |
+| `reading` | on | `show_on_front` (`posts`\|`page`), `page_on_front`, `page_for_posts` (0 or a **published page**) |
+| `discussion` | on | `default_comment_status`, `default_ping_status` (`open`\|`closed`), `require_name_email`, `comment_registration`, `close_comments_for_old_posts`, `thread_comments` (booleans), `close_comments_days_old` (1–3650), `comments_per_page` (1–200) |
+| `media` | on | `thumbnail_size_w/h`, `medium_size_w/h`, `large_size_w/h` (0–10000) |
+| `permalinks` | **off** | `permalink_structure`, `category_base`, `tag_base` |
+| `site_url` | **off** | `siteurl`, `home` |
+
+### Never settable
+`default_role` and `users_can_register` (together they create admin accounts), `admin_email` (receives password resets: account takeover), `blog_public` (silent de-indexing), `active_plugins` (use the plugins API), `template` / `stylesheet` (use the themes API). These are refused with an explanation, whatever groups are enabled.
+
+### Rules worth knowing
+- **Cross-field:** `show_on_front=page` needs a valid `page_on_front` (set it in the same request); `page_for_posts` must differ from `page_on_front`.
+- **`permalink_structure`** must start with `/`, use only known tags (`%year% %monthnum% %day% %hour% %minute% %second% %post_id% %postname% %category% %author%`) and contain `%postname%` or `%post_id%`. **Plain permalinks (empty) are refused:** they remove `/wp-json/`, which would cut the agent off from the site. Rewrite rules are flushed automatically.
+- **`siteurl` / `home`** (group `site_url`) must be an http(s) URL without credentials, query or fragment. A wrong value takes the whole site offline, which is why the group is off by default. *(Earlier versions exposed these two keys by default and wrote them unvalidated.)*
+- Updates return the new, typed values.
+
+### Legacy allowlist
+`AGENT_BRIDGE_ALLOWED_OPTIONS` still works and **replaces** the allowlist (groups are then ignored). It is the site owner's explicit decision, so it may list any key, including ones above. Keys the bridge knows are still validated; other keys are passed through unvalidated, as before.
 
 ### PATCH /options — body schema
 ```json
-{ "blogname": "New Site Title", "posts_per_page": 10 }
+{ "blogname": "New Site Title", "posts_per_page": 10, "require_name_email": true }
 ```
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `option_not_allowed` | 403 | Key is never settable, in a disabled group (the message says which constant enables it), or unknown |
+| `validation_error` | 422 | One or more values invalid; the message and `data.errors` name every key and reason. Nothing was saved |
 
 ---
 
@@ -750,11 +776,12 @@ Define custom post types, taxonomies and typed meta fields **as data**. They are
 ```php
 // wp-config.php
 
-// Allowlisted site option keys (GET/PATCH /options)
-define('AGENT_BRIDGE_ALLOWED_OPTIONS', [
-    'blogname', 'blogdescription', 'siteurl', 'home',
-    'default_comment_status', 'posts_per_page',
-]);
+// Option groups exposed via GET/PATCH /options (default: general, reading, discussion, media).
+// Also available: 'permalinks', 'site_url'. See the Site Options section.
+define('AGENT_BRIDGE_OPTION_GROUPS', ['general', 'reading', 'discussion', 'media']);
+
+// Legacy: an explicit list of option keys. Replaces the groups above when defined.
+// define('AGENT_BRIDGE_ALLOWED_OPTIONS', ['blogname', 'blogdescription']);
 
 // Allowlisted WP-CLI commands (POST /wp-cli)
 define('AGENT_BRIDGE_CLI_ALLOWLIST', [
