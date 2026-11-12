@@ -21,7 +21,7 @@ cd ../wp-agent-mcp && BRIDGE_TEST_URL=http://127.0.0.1:8088 BRIDGE_TEST_USER=age
 podman compose -f dev/compose.yaml down -v      # discard everything
 ```
 
-`CONTAINER_CLI=docker` (or `podman`) selects the runtime; the default is podman if installed, else docker. **CI** (`.github/workflows/ci.yml`) lints every PHP file on PHP 8.0–8.4 and runs the same script against `wp-agent-mcp` — the branch with the same name as the PR's if it exists, otherwise `main`, so paired PRs test each other.
+`CONTAINER_CLI=docker` (or `podman`) selects the runtime; the default is podman if installed, else docker. **CI** (`.github/workflows/ci.yml`) lints every PHP file on PHP 8.0–8.4 and runs the same script against `wp-agent-mcp` — the branch with the same name as the PR's **while that branch has an open PR**, otherwise `main`, so paired PRs test each other (a merged branch that still exists is ignored: it is stale).
 
 `WORDPRESS_CONFIG_EXTRA` in `dev/compose.yaml` only applies when `wp-config.php` is first created — after changing it, rebuild with `down -v`. The stack enables `AGENT_BRIDGE_ALLOW_FILE_WRITE`; production defaults stay off. `dev/php-dev.ini` sets `opcache.revalidate_freq=0` so PHP edits take effect immediately (with PHP's default of 2s, a test run right after an edit can silently run the old code — this makes mutation checks unreliable).
 

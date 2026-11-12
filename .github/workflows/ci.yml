@@ -45,15 +45,18 @@ jobs:
         with:
           path: bridge
 
-      # The tests live in wp-agent-mcp. Use its branch with the same name as this one when it exists
-      # (so paired PRs test each other), otherwise main.
-      - name: Pick the matching wp-agent-mcp branch
+      # The tests live in wp-agent-mcp. Pair with its branch of the same name ONLY while that branch has an
+      # open pull request from the same owner (so paired PRs test each other); otherwise use main.
+      # Checking for an open PR matters: a branch whose PR already merged still exists and is stale.
+      - name: Pick the matching wp-agent-mcp ref
         id: pair
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
           OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if git ls-remote --exit-code --heads "https://github.com/${OWNER}/wp-agent-mcp.git" "$BRANCH" >/dev/null 2>&1; then
+          open_prs=$(gh api -X GET "repos/${OWNER}/wp-agent-mcp/pulls" -f state=open -f head="${OWNER}:${BRANCH}" --jq 'length' 2>/dev/null || echo 0)
+          if [ "${open_prs:-0}" -gt 0 ]; then
             echo "ref=$BRANCH" >> "$GITHUB_OUTPUT"
           else
             echo "ref=main" >> "$GITHUB_OUTPUT"
