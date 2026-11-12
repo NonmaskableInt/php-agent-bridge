@@ -71,7 +71,7 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 
 `includes/Routes/CliRoute.php` — operates in two modes:
 - **Allowlist mode (default):** only commands matching a prefix in `AGENT_BRIDGE_CLI_ALLOWLIST` (or the built-in default list) are permitted.
-- **Open mode** (`AGENT_BRIDGE_CLI_OPEN=true`): any WP-CLI command is allowed, including plugin-registered subcommands. A hardcoded denylist (`db drop`, `db reset`, `db clean`, `site delete`, `core download`) is always enforced in both modes.
+- **Open mode** (`AGENT_BRIDGE_CLI_OPEN=true`): **bypasses all file/PHP guardrails** (`wp eval`, `eval-file`, `shell`, `config set`, `db query`, … run with no lint, backup, rollback, write gate or DISALLOW_* check) — documented, deliberately not hardened. Any WP-CLI command is allowed, including plugin-registered subcommands. A hardcoded denylist (`db drop`, `db reset`, `db clean`, `site delete`, `core download`) is always enforced in both modes.
 
 `includes/Routes/FilesRoute.php` — read/write/delete files under `wp-content/{themes,plugins,mu-plugins,agent-apps}`; writes are off unless `AGENT_BRIDGE_ALLOW_FILE_WRITE` is `true`. Supporting classes in `includes/Files/`: `PathGuard` (path jail, protected paths incl. the bridge itself, write denylist/extension allowlist), `PhpGuard` (`php -l` lint + a separate-process WordPress boot as the health check; fails closed), `Backups` (versioned copies, `audit.log` and `requests.log` in a non-web-served directory — see `Backups::dir()`), `WriteGate` (the single place that decides if writes are allowed: opt-in constant, `DISALLOW_FILE_MODS`/`DISALLOW_FILE_EDIT` with no exemptions, per-root capabilities incl. `unfiltered_html` for agent-apps; used by both `/files` and `/apps`). Every PHP write is linted, backed up, swapped atomically, health-checked, and rolled back if WordPress stops booting. Never weaken a guard without a contract test that fails when it is removed.
 
@@ -80,6 +80,16 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 `includes/Routes/HeadlessRoute.php` — headless-CMS configuration (options only, no file writes): CORS allowlist, optional redirect of the public site to a separate front end, editor preview links. Supporting classes in `includes/Headless/`: `Config` (all-or-nothing validation incl. cross-field rules; strict origin/URL parsing), `Runtime` (hooks: replaces core's reflect-any-origin CORS only when an allowlist is set; redirect on `template_redirect` priority 1, after `Apps\Server`; `preview_post_link` filter). The redirect builds its target as `frontend_url` + path, so it cannot be steered to another host.
 
 `includes/Routes/ContentModelRoute.php` — custom post types, taxonomies and typed meta fields defined as data (option `agent_bridge_content_model`), registered on `init` priority 0 by `ContentModel\Runtime` with `show_in_rest` forced on; options only, no file writes. `ContentModel\Model` does strict all-or-nothing validation and, **independently**, filters reserved names when reading (runtime must never trust stored data — a bad DB value must not redefine core). A broken definition is skipped, never fatal. Rewrite rules flush on the request after a change (flag option).
+
+`includes/Options/` + `includes/Routes/OptionsRoute.php` — typed, grouped site options. `Registry` holds the groups, a typed spec per key, the never-settable list (with reasons) and which groups are enabled (`AGENT_BRIDGE_OPTION_GROUPS`); `Validator` checks values. Writes are two-phase (validate every key and collect every error, then apply), so a bad value never leaves a half-applied batch. Plain permalinks are refused because they remove `/wp-json/`, the endpoint the agent itself uses.
+
+`includes/Routes/TemplatesRoute.php` + `includes/Templates/` — what renders a page, and block-template overrides. `Store` reads with WordPress's resolver and writes through core's REST controllers (`rest_do_request`) so Site-Editor behaviour cannot drift; `Resolver` + `resolve-worker.php` answer "which template renders this URL" in a separate CLI process (it sets `$_GET` and server vars, and removes `template_redirect` actions so canonical/headless redirects do not interfere); `Classic` lists a classic theme's PHP template files. Key idea: a database override masks the theme file, so everything reports `source` and `masks_theme_file`.
+
+`includes/Routes/ThemeToolsRoute.php` + `includes/Themes/` — read-only validators. `BlockMarkup` checks the `<!-- wp:… -->` syntax with its own tokenizer (balance, JSON attributes, unregistered blocks, free-form HTML) because WordPress's parser silently accepts broken markup; `Validator` checks a theme's structure, `theme.json` (including which properties WordPress's sanitiser drops, found by diffing against `WP_Theme_JSON`), template-part references, and PHP syntax. `template_set` returns the markup check as `validation`.
+
+`includes/Routes/GlobalStylesRoute.php` + `includes/GlobalStyles/Store.php` — the Site Editor's user-level theme.json layer (a `wp_global_styles` post that overrides the theme's `theme.json`). Reads the post directly (no resolver cache), merges objects key-by-key (lists replaced), **sanitises through `WP_Theme_JSON` before saving and reports what was dropped**, and writes through core's REST controller. Backups are restored only by exact name pattern (`NAME_RE`), which is what stops path traversal into sibling backup folders — covered by a test using a real file.
+
+`includes/Themes/Scaffold.php` (route: `ThemeToolsRoute::scaffold`) — creates block, classic or child themes. Writes to a hidden `.agent-scaffold-*` staging directory, passes every path through `PathGuard`, lints generated PHP, requires `Validator` to pass, then renames into place; never activates, never overwrites. Gated by `WriteGate` like `/files`. Header fields are rejected if they contain `*/`, `<?`, newlines or control characters (they are written into `style.css`).
 
 ## Configuration Constants
 
@@ -92,6 +102,8 @@ Define in `wp-config.php`:
 - `AGENT_BRIDGE_CLI_OPEN` — set `true` to allow any WP-CLI command (denylist-only mode)
 - `AGENT_BRIDGE_ALLOW_FILE_WRITE` — set `true` to enable `/files` writes, deletes and restores (disabled by default)
 - `AGENT_BRIDGE_DISABLE_CONTENT_MODEL` — set `true` to stop registering the stored content model (emergency switch)
+- `AGENT_BRIDGE_OPTION_GROUPS` — option groups exposed (default `general`, `reading`, `discussion`, `media`; also `permalinks`, `site_url`)
+- `AGENT_BRIDGE_ALLOWED_OPTIONS` — legacy explicit key list; replaces the groups when defined
 - `AGENT_BRIDGE_PHP_BINARY` — optional path to the PHP CLI used for lint and health checks (auto-detected otherwise)
 - `AGENT_BRIDGE_DB_API` — set `true` to enable the `/db/*` endpoints (disabled by default)
 - `AGENT_BRIDGE_DB_ALLOW_DDL` — set `true` to permit DDL statements (`DROP TABLE`, `TRUNCATE`, `ALTER TABLE`, `CREATE TABLE`, `RENAME TABLE`)

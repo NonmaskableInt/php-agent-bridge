@@ -107,6 +107,9 @@ add_action( 'rest_api_init', function (): void {
     \AgentBridge\Routes\AppsRoute::register();
     \AgentBridge\Routes\HeadlessRoute::register();
     \AgentBridge\Routes\ContentModelRoute::register();
+    \AgentBridge\Routes\TemplatesRoute::register();
+    \AgentBridge\Routes\ThemeToolsRoute::register();
+    \AgentBridge\Routes\GlobalStylesRoute::register();
 
     // Optional WooCommerce module — loaded only when WooCommerce is active
     if ( class_exists( 'WooCommerce' ) ) {

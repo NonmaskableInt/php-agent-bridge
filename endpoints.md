@@ -137,22 +137,48 @@ Accepts the same body as `/media/upload`. The plugin overwrites the original fil
 
 ## Site Options
 
+Typed, grouped access to site options. Values are **validated**, and a PATCH is **all-or-nothing**: every key is checked (and every problem reported) before anything is written.
+
 | Method | Route | Capability | Description |
 |--------|-------|------------|-------------|
-| `GET` | `/options` | `manage_options` | Get options by key |
+| `GET` | `/options/schema` | `manage_options` | Groups, keys with types and limits, what is enabled, what can never be set |
+| `GET` | `/options` | `manage_options` | Get options by key (typed: integers, booleans) |
 | `PATCH` | `/options` | `manage_options` | Update options |
 
-Keys are restricted to the `AGENT_BRIDGE_ALLOWED_OPTIONS` allowlist (default: `blogname`, `blogdescription`, `siteurl`, `home`, `default_comment_status`, `posts_per_page`).
+### Groups
+Enable groups in `wp-config.php` with `define('AGENT_BRIDGE_OPTION_GROUPS', ['general','reading', ...]);` (default: the first four).
 
-### GET /options — query params
-| Param | Type | Notes |
-|-------|------|-------|
-| `keys[]` | string (repeatable) | e.g. `?keys[]=blogname&keys[]=siteurl`. Omit to return all allowlisted options. |
+| Group | Default | Keys |
+|-------|---------|------|
+| `general` | on | `blogname` (1–200), `blogdescription` (0–300), `timezone_string` (IANA id), `date_format`, `time_format`, `start_of_week` (0–6), `posts_per_page` (1–100), `posts_per_rss` (1–100) |
+| `reading` | on | `show_on_front` (`posts`\|`page`), `page_on_front`, `page_for_posts` (0 or a **published page**) |
+| `discussion` | on | `default_comment_status`, `default_ping_status` (`open`\|`closed`), `require_name_email`, `comment_registration`, `close_comments_for_old_posts`, `thread_comments` (booleans), `close_comments_days_old` (1–3650), `comments_per_page` (1–200) |
+| `media` | on | `thumbnail_size_w/h`, `medium_size_w/h`, `large_size_w/h` (0–10000) |
+| `permalinks` | **off** | `permalink_structure`, `category_base`, `tag_base` |
+| `site_url` | **off** | `siteurl`, `home` |
+
+### Never settable
+`default_role` and `users_can_register` (together they create admin accounts), `admin_email` (receives password resets: account takeover), `blog_public` (silent de-indexing), `active_plugins` (use the plugins API), `template` / `stylesheet` (use the themes API). These are refused with an explanation, whatever groups are enabled.
+
+### Rules worth knowing
+- **Cross-field:** `show_on_front=page` needs a valid `page_on_front` (set it in the same request); `page_for_posts` must differ from `page_on_front`.
+- **`permalink_structure`** must start with `/`, use only known tags (`%year% %monthnum% %day% %hour% %minute% %second% %post_id% %postname% %category% %author%`) and contain `%postname%` or `%post_id%`. **Plain permalinks (empty) are refused:** they remove `/wp-json/`, which would cut the agent off from the site. Rewrite rules are flushed automatically.
+- **`siteurl` / `home`** (group `site_url`) must be an http(s) URL without credentials, query or fragment. A wrong value takes the whole site offline, which is why the group is off by default. *(Earlier versions exposed these two keys by default and wrote them unvalidated.)*
+- Updates return the new, typed values.
+
+### Legacy allowlist
+`AGENT_BRIDGE_ALLOWED_OPTIONS` still works and **replaces** the allowlist (groups are then ignored). It is the site owner's explicit decision, so it may list any key, including ones above. Keys the bridge knows are still validated; other keys are passed through unvalidated, as before.
 
 ### PATCH /options — body schema
 ```json
-{ "blogname": "New Site Title", "posts_per_page": 10 }
+{ "blogname": "New Site Title", "posts_per_page": 10, "require_name_email": true }
 ```
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `option_not_allowed` | 403 | Key is never settable, in a disabled group (the message says which constant enables it), or unknown |
+| `validation_error` | 422 | One or more values invalid; the message and `data.errors` name every key and reason. Nothing was saved |
 
 ---
 
@@ -346,6 +372,8 @@ Default allowlist: `cache flush`, `cron event run --due-now`, `rewrite flush`, `
 ```php
 define('AGENT_BRIDGE_CLI_OPEN', true);
 ```
+
+> **Warning: open mode bypasses every guardrail in this document.** In open mode `wp eval`, `wp eval-file`, `wp shell`, `wp config set`, `wp plugin install <url>`, `wp theme install <url>`, `wp db query` (and any plugin's own subcommands) all run. That is arbitrary PHP and arbitrary database access, **without** the path jail, extension allowlist, PHP lint, backups, boot-test and rollback that `/files` applies, without the `AGENT_BRIDGE_ALLOW_FILE_WRITE` gate, and the code that `wp eval`, `eval-file`, `shell` and `db query` run never consults `DISALLOW_FILE_EDIT` / `DISALLOW_FILE_MODS`, so those constants do not stop it. Only the five commands in the denylist below are blocked. Enabling open mode means trusting the agent with the same power as shell access to the site: do not turn it on if the safety of the PHP backend matters. The default allowlist mode is read-mostly and is what you want.
 
 ### Permanent denylist (always blocked in both modes)
 | Prefix | Reason |
@@ -705,6 +733,159 @@ Define custom post types, taxonomies and typed meta fields **as data**. They are
 
 ---
 
+## Templates
+
+Find out **what renders a page**, and manage block-theme template overrides.
+
+> **The trap this solves.** In a block theme, anything saved in the Site Editor is stored in the *database* and **overrides the theme's template file**. Editing `templates/single.html` can then appear to do nothing. `template_list` / `template_resolve` show `source: "custom"` and `masks_theme_file: true` when that is happening, and `template_get` returns the hidden file content (`theme_content`).
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/templates?type=template\|part` | Block themes: templates (or parts) with their source. Classic themes: PHP template `files` |
+| `GET` | `/templates/item?id=&type=` | One template: block markup, plus `theme_content` when an override hides a theme file |
+| `POST` | `/templates/item` | Create or update a template/part in the database (an override when the theme ships one) |
+| `DELETE` | `/templates/item?id=&type=` | Remove an override (back to the theme file) or delete a custom-only template. Backed up first |
+| `POST` | `/templates/resolve` | `{ "url": "/?p=12" }` — which template WordPress renders for that URL |
+| `GET` | `/templates/backups` | Saved copies of removed overrides, newest first |
+| `POST` | `/templates/restore` | `{ "name": "<backup>" }` — bring one back |
+
+Reads need `manage_options`; changes also need `edit_theme_options`. Writes go through WordPress's own REST controllers, so sanitising (kses for users without `unfiltered_html`) and term assignment are core's, exactly as in the Site Editor. No files are written, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. Changes are audit-logged.
+
+### Template object (block themes)
+`id` (`theme//slug`), `slug`, `type` (`template`\|`part`), `title`, `description`, `source` (`theme`\|`custom`), `origin`, `is_custom` (no theme file exists), `has_theme_file`, **`masks_theme_file`** (a database override hides the theme file), `wp_id` (the post id of the override, else `null`), `modified`, and `area` for parts.
+
+### POST /templates/item — body
+```json
+{ "id": "single", "type": "template", "content": "<!-- wp:group -->…", "title": "Single post", "description": "…" }
+```
+`id` is a slug or `theme//slug` of the **active theme only**. A slug the theme does not ship creates a custom template. Parts accept `area` (`header`, `footer`, `uncategorized`). `content` (block markup) is limited to 500000 bytes; `title` to 100, `description` to 300. Unknown fields are rejected (`422`).
+
+### POST /templates/resolve
+Runs WordPress in a separate PHP process (like the file health check), so it cannot affect the request. It reports what WordPress itself would render: `{ is_block, type, hierarchy, template_id, slug, source, masks_theme_file, file }`. `type` is the hierarchy that **matched** (a category with no `category.html` reports `archive`). Block themes return `template_id`; classic themes return `file`. The site's own redirects (canonical URLs, the headless redirect, deployed apps) are deliberately not followed. `url` is a path/query or a full URL on this site; other hosts, scheme-relative URLs, control characters and URLs over 2000 characters are refused.
+
+### Classic themes
+There are no block templates. `GET /templates` returns `files` — each with `file`, `kind` (`template`, `part`, `page_template` with its `name`, `functions`), the owning `theme` (child or parent) and a `path` for the `/files` API. `GET/POST/DELETE /templates/item` answer `not_block_theme`; edit the PHP with `/files` (linted, backed up, health-checked).
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `not_block_theme` | 409 | The active theme is a classic theme |
+| `template_not_found` | 404 | No such template/part in the active theme |
+| `no_override` | 409 | Reset requested but the template comes from the theme file |
+| `wrong_theme` | 422 | The id names a theme other than the active one |
+| `validation_error` | 422 | Bad id/type/area/field, or content too large |
+| `backup_not_found` | 404 | No such backup |
+| `resolve_failed` | 500 | WordPress could not resolve that URL (detail in the message) |
+| `insufficient_capability` | 403 | Writing needs `edit_theme_options` |
+
+---
+
+## Theme tools (validation and scaffolding)
+
+Checks so an agent can verify what it wrote **before trusting or activating it**, and one-step theme scaffolding (below). WordPress's own parsers are forgiving: broken block markup renders as something odd, an invalid `theme.json` is silently ignored, a missing template part shows nothing. These report it. The validators need `manage_options` and write nothing; scaffolding writes files and is gated like `/files`.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/theme-tools/validate?stylesheet=` | Validate an installed theme (default: the active one) |
+| `POST` | `/theme-tools/validate-markup` | `{ "content": "<!-- wp:… -->" }` — check block markup without saving |
+| `POST` | `/theme-tools/scaffold` | Create a block, classic or child theme (not activated) |
+
+`POST /templates/item` also returns the markup check as `validation` (the template is saved either way, like the Site Editor).
+
+### Result
+```json
+{ "stylesheet": "my-theme", "theme_type": "block", "valid": false,
+  "errors":   [ { "code": "missing_template_part", "level": "error", "message": "…", "file": "templates/single.html", "line": 1 } ],
+  "warnings": [ … ], "checked": { "files": 14 } }
+```
+`valid` is true when there are no errors; warnings never fail validation.
+
+### Block markup checks
+| Code | Level | Meaning |
+|------|-------|---------|
+| `unclosed_block`, `unexpected_closer`, `mismatched_closer` | error | Delimiters do not balance |
+| `invalid_attributes` | error | The `{…}` attributes are not a valid JSON object |
+| `unregistered_block` | warning | Block name not registered (misspelt, or its plugin is inactive) |
+| `freeform_content` | warning | HTML outside any block |
+
+### Theme checks
+| Code | Level | Meaning |
+|------|-------|---------|
+| `missing_theme_header` | error | `style.css` has no `Theme Name:` |
+| `missing_index_template` | error | Block theme: `templates/index.html`; classic: `index.php` |
+| `missing_parent_theme` / `parent_is_child` | error | A child theme's parent is absent, or is itself a child |
+| `missing_template_part` | error | A template references `parts/<slug>.html` that does not exist |
+| `invalid_theme_json` | error | `theme.json` is not valid JSON (WordPress ignores the whole file) |
+| `php_lint_failed` | error | A theme PHP file has a syntax error |
+| `unknown_theme_json_key`, `unsupported_theme_json_version` | warning | Ignored key / version other than 1–3 |
+| `ignored_theme_json_property` | warning | A `settings`/`styles` property WordPress's sanitiser drops (lists are not compared) |
+| `pattern_missing_header` | warning | A `patterns/*.php` file lacks `Title:` / `Slug:` |
+| `lint_unavailable` | warning | PHP could not be run to check syntax |
+
+A theme counts as a block theme if it has `theme.json` or `templates/*.html`, even when `templates/index.html` is missing (which is then reported). At most 200 files are checked per kind.
+
+
+### POST /theme-tools/scaffold
+```json
+{ "type": "block", "slug": "my-theme", "name": "My Theme", "description": "…", "author": "…" }
+{ "type": "child", "slug": "my-child", "name": "My Child", "parent": "twentytwentyfive" }
+```
+Creates a working theme in one step. **Never activates it** (use `/themes/{stylesheet}/activate`) and **never overwrites** an existing theme (`theme_exists`).
+
+| `type` | Creates |
+|--------|---------|
+| `block` | `style.css`, `theme.json` (palette, typography, layout, header/footer `templateParts` areas), `functions.php`, `templates/{index,single,page,404}.html`, `parts/{header,footer}.html` |
+| `classic` | `style.css`, `functions.php`, `header.php`, `footer.php`, `index.php`, `single.php`, `page.php`, `archive.php`, `search.php`, `404.php` |
+| `child` | `style.css` (with `Template:`) and `functions.php`. A block parent's templates and `theme.json` are inherited; a classic parent's stylesheet is enqueued. The parent must be installed and not itself a child |
+
+- **All-or-nothing.** Files are written to a hidden staging directory (`.agent-scaffold-…`, ignored by WordPress), generated PHP is linted, and the theme must pass the validator above before it is moved into place. A failure leaves nothing behind.
+- `slug`: 2–41 characters, lowercase letters, digits and dashes, starting with a letter. `name` (1–60), `description` (≤200) and `author` (≤60) must be a single line with no control characters, `*/` or `<?`, because they are written into the `style.css` header comment.
+- Unknown fields are rejected. Needs `AGENT_BRIDGE_ALLOW_FILE_WRITE`, the `edit_themes` capability, and is refused when `DISALLOW_FILE_EDIT` / `DISALLOW_FILE_MODS` is set.
+- Returns `{ stylesheet, type, path, files, validation, activated: false }`. Customise afterwards with `/files` (PHP, `theme.json`), `/templates` and `/global-styles`.
+
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `theme_exists` | 409 | A theme with that slug already exists |
+| `parent_not_found` / `parent_is_child` | 422 | The parent is missing, or is itself a child |
+| `scaffold_failed` | 500 | Generation, lint or validation failed; nothing was created |
+| `file_write_disabled` / `file_edit_disabled` | 403 | The file-write opt-in is off, or a `DISALLOW_*` constant is set |
+
+---
+
+## Global styles
+
+The Site Editor's **user-level `theme.json` layer** (the "Styles" panel: colours, typography, spacing, palettes). It lives in the database as a `wp_global_styles` post and **overrides the theme's own `theme.json`**, so editing `theme.json` can appear to do nothing. Needs a theme with `theme.json` (`no_theme_json` otherwise). Reads need `manage_options`; changes also need `edit_theme_options`. No files are written. Changes are audit-logged.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/global-styles?include=theme` | The user layer (`user.settings`, `user.styles`, `has_customizations`, `post_id`); `include=theme` adds the `theme.json` defaults it overrides |
+| `POST` | `/global-styles` | Change styles. Merges by default |
+| `DELETE` | `/global-styles` | Remove all customisations (backed up first) |
+| `GET` | `/global-styles/backups` | Saved copies of removed customisations |
+| `POST` | `/global-styles/restore` | `{ "name": "<backup>" }` — bring one back (same theme only) |
+
+### POST /global-styles — body
+```json
+{ "styles": { "color": { "background": "#fff" }, "typography": { "fontSize": "18px" } },
+  "settings": { "color": { "palette": { "custom": [ { "slug": "brand", "name": "Brand", "color": "#12ab34" } ] } } },
+  "merge": true }
+```
+- `settings` / `styles` use `theme.json` structure. At least one is required; both must be objects; unknown fields are rejected (`422`); payload limit 200000 bytes.
+- **Merge** (default): objects merge key by key; **lists are replaced whole** (a palette, font families). `merge: false` replaces the given section outright.
+- **Only valid properties are saved.** WordPress silently ignores unknown properties; the bridge drops them *before* saving and returns their paths in `ignored` (e.g. `styles.color.notAProperty`), so the stored data matches what actually applies.
+- Palettes entered under `settings.color.palette.custom` become CSS variables (`--wp--preset--color--<slug>`) on the site.
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `no_theme_json` | 409 | The active theme has no `theme.json` |
+| `no_customizations` | 409 | Reset requested but there is nothing to reset |
+| `validation_error` | 422 | Bad field/type, nothing to change, oversized, or a malformed backup name |
+| `wrong_theme` | 422 | Backup belongs to a different theme |
+| `backup_not_found` | 404 | No such backup |
+
+---
+
 ## Global Error Codes
 
 | Code | HTTP | Meaning |
@@ -750,11 +931,12 @@ Define custom post types, taxonomies and typed meta fields **as data**. They are
 ```php
 // wp-config.php
 
-// Allowlisted site option keys (GET/PATCH /options)
-define('AGENT_BRIDGE_ALLOWED_OPTIONS', [
-    'blogname', 'blogdescription', 'siteurl', 'home',
-    'default_comment_status', 'posts_per_page',
-]);
+// Option groups exposed via GET/PATCH /options (default: general, reading, discussion, media).
+// Also available: 'permalinks', 'site_url'. See the Site Options section.
+define('AGENT_BRIDGE_OPTION_GROUPS', ['general', 'reading', 'discussion', 'media']);
+
+// Legacy: an explicit list of option keys. Replaces the groups above when defined.
+// define('AGENT_BRIDGE_ALLOWED_OPTIONS', ['blogname', 'blogdescription']);
 
 // Allowlisted WP-CLI commands (POST /wp-cli)
 define('AGENT_BRIDGE_CLI_ALLOWLIST', [
