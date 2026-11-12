@@ -6,6 +6,7 @@ use AgentBridge\Apps\Archive;
 use AgentBridge\Apps\Registry;
 use AgentBridge\Auth;
 use AgentBridge\Files\Backups;
+use AgentBridge\Files\WriteGate;
 use AgentBridge\Idempotency;
 use AgentBridge\Response;
 
@@ -226,13 +227,7 @@ class AppsRoute {
     // -------------------------------------------------------------- helpers
 
     private static function gate(): ?\WP_REST_Response {
-        if ( ! ( defined( 'AGENT_BRIDGE_ALLOW_FILE_WRITE' ) && AGENT_BRIDGE_ALLOW_FILE_WRITE ) ) {
-            return Response::error( 'file_write_disabled', 'App deploys are disabled. Set AGENT_BRIDGE_ALLOW_FILE_WRITE to true.', 403 );
-        }
-        if ( defined( 'DISALLOW_FILE_MODS' ) && DISALLOW_FILE_MODS ) {
-            return Response::error( 'file_edit_disabled', 'DISALLOW_FILE_MODS is set on this site.', 403 );
-        }
-        return null;
+        return WriteGate::check_site() ?? WriteGate::check_capability( 'agent-apps' );
     }
 
     private static function describe( string $slug, array $app ): array {

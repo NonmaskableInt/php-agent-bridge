@@ -34,7 +34,8 @@ Define in `wp-config.php`:
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `AGENT_BRIDGE_LOG_REQUESTS` | `false` | Log requests to `wp-content/agent-bridge.log` |
+| `AGENT_BRIDGE_LOG_REQUESTS` | `false` | Log requests to `requests.log` in the (non-web-served) backup directory |
+| `AGENT_BRIDGE_BACKUP_DIR` | `wp-content/agent-bridge-<random>` | Where backups, `audit.log` and `requests.log` are kept — set to a path outside the web root |
 | `AGENT_BRIDGE_IDEMPOTENCY_TTL` | `86400` | Idempotency key TTL in seconds |
 | `AGENT_BRIDGE_CLI_ALLOWLIST` | built-in list | Array of allowed WP-CLI command prefixes |
 | `AGENT_BRIDGE_CLI_OPEN` | `false` | Allow any WP-CLI command (denylist-only mode) |

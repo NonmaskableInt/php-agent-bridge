@@ -503,7 +503,7 @@ Loaded automatically when WooCommerce is active. All order routes require `manag
 define('AGENT_BRIDGE_ALLOW_FILE_WRITE', true);
 ```
 
-Reads need `manage_options`. Writes additionally need `edit_themes` (themes) or `edit_plugins` (plugins, mu-plugins), or only `manage_options` for `agent-apps`. Writes are refused when `DISALLOW_FILE_MODS` is set, and (except for `agent-apps`) when `DISALLOW_FILE_EDIT` is set.
+Reads need `manage_options`. Writes additionally need `edit_themes` (themes), `edit_plugins` (plugins, mu-plugins), or `manage_options` **and `unfiltered_html`** (`agent-apps`, because app scripts run with the site's own origin; WordPress withholds `unfiltered_html` from multisite site admins and when `DISALLOW_UNFILTERED_HTML` is set). Writes, deletes, restores and app deploys are refused when `DISALLOW_FILE_MODS` **or** `DISALLOW_FILE_EDIT` is set — there is no exemption for `agent-apps`, because JavaScript is code.
 
 All paths are relative to `wp-content` and limited to the roots `themes`, `plugins`, `mu-plugins` and `agent-apps`. `wp-admin`, `wp-includes`, `wp-config.php`, symlinks, traversal (`..`) and the bridge plugin's own directory are never accessible.
 
@@ -528,22 +528,30 @@ All paths are relative to `wp-content` and limited to the roots `themes`, `plugi
 `encoding` is `utf8` (default) or `base64` (required for binary files). Max 5 MB.
 
 ### Write pipeline
-1. Path jail, root and extension allowlist (`php js mjs css json html htm txt md xml svg map twig png jpg jpeg gif webp ico woff woff2 ttf`). `.htaccess`, `.user.ini`, `php.ini`, `.htpasswd` and `wp-config.php` are never writable. PHP is not allowed inside `agent-apps`.
+1. Path jail, root and extension allowlist (`php js mjs css json html htm txt md xml svg map twig png jpg jpeg gif webp ico woff woff2 ttf webmanifest`). `.htaccess`, `.user.ini`, `php.ini`, `.htpasswd` and `wp-config.php` are never writable. PHP is not allowed inside `agent-apps`. A script extension (`php php3-8 phtml pht phps phar`) in **any** position of the name is refused, so `avatar.php.png` cannot be used to slip past the allowlist on servers that execute multi-extension names.
 2. **PHP only:** `php -l` lint of the new content — `php_lint_failed` on a syntax error, file untouched.
-3. The previous version is copied to `wp-content/agent-bridge-backups/` (20 kept per file, web access denied).
+3. The previous version is copied to the backup directory (20 kept per file) — see *Backup directory* below.
 4. The new file is swapped in atomically.
 5. **PHP only:** WordPress is booted in a separate PHP process. If it no longer boots, the change is rolled back and `health_check_failed` is returned with the PHP error.
-6. The action is appended to `agent-bridge-backups/audit.log`.
+6. The action is appended to `audit.log` in the backup directory.
 
 If PHP or `proc_open` is unavailable the bridge refuses PHP writes (`verification_unavailable`) rather than write unverified code.
 
 **Known limit:** a PHP file is live for the duration of one WordPress boot (typically under a second) before the health check completes. A bad file is removed immediately after, but a request in that window can see the fault.
 
+### Backup directory
+Backups hold full source code, so they are kept out of reach of the web server:
+
+- Set `AGENT_BRIDGE_BACKUP_DIR` to a directory **outside the web root** (recommended).
+- Otherwise the bridge creates `wp-content/agent-bridge-<32 random hex>` once and remembers it. The name is unguessable, it contains `.htaccess` (Apache), `web.config` (IIS) and `index.php` (no listings), and these are re-created if they go missing. Protection therefore does not depend on the web server honouring `.htaccess` (it does not on nginx).
+- It holds `audit.log`, the per-file backups and, when `AGENT_BRIDGE_LOG_REQUESTS` is on, `requests.log`.
+- A `wp-content/agent-bridge-backups/` or `wp-content/agent-bridge.log` left by an earlier version is migrated into it automatically, so nothing remains at a guessable path.
+
 ### Error codes
 | Code | HTTP | Meaning |
 |------|------|---------|
 | `file_write_disabled` | 403 | `AGENT_BRIDGE_ALLOW_FILE_WRITE` is not true |
-| `file_edit_disabled` | 403 | `DISALLOW_FILE_EDIT` / `DISALLOW_FILE_MODS` is set |
+| `file_edit_disabled` | 403 | `DISALLOW_FILE_EDIT` or `DISALLOW_FILE_MODS` is set |
 | `path_not_allowed` | 403 | Outside the allowed roots, protected, or a disallowed file type |
 | `file_not_found` | 404 | Path does not exist |
 | `backup_not_found` | 404 | No such backup |
@@ -558,7 +566,7 @@ If PHP or `proc_open` is unavailable the bridge refuses PHP writes (`verificatio
 
 ## Apps
 
-Deploy a built front-end (React, Vue, plain static) onto the site and serve it at a mount path. **Disabled unless `AGENT_BRIDGE_ALLOW_FILE_WRITE` is true**; also refused when `DISALLOW_FILE_MODS` is set. All routes require `manage_options`.
+Deploy a built front-end (React, Vue, plain static) onto the site and serve it at a mount path. **Disabled unless `AGENT_BRIDGE_ALLOW_FILE_WRITE` is true**; also refused when `DISALLOW_FILE_MODS` or `DISALLOW_FILE_EDIT` is set. Deploy, rollback and delete need `manage_options` **and `unfiltered_html`** (app scripts run on the site's own origin). Reads need `manage_options`.
 
 | Method | Route | Description |
 |--------|-------|-------------|
@@ -611,7 +619,7 @@ Each deploy is an immutable directory under `wp-content/agent-apps/{slug}/releas
 
 ## Headless
 
-Turn WordPress into a headless CMS for a separate front end (a React app deployed with `/apps`, or any other origin). Changes site options only, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. `GET/PATCH /headless` need `manage_options`; every change is written to `agent-bridge-backups/audit.log`.
+Turn WordPress into a headless CMS for a separate front end (a React app deployed with `/apps`, or any other origin). Changes site options only, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. `GET/PATCH /headless` need `manage_options`; every change is written to `audit.log` in the backup directory.
 
 | Method | Route | Description |
 |--------|-------|-------------|
@@ -652,7 +660,7 @@ Unknown keys are rejected. `frontend_url: null` clears it.
 
 ## Content model
 
-Define custom post types, taxonomies and typed meta fields **as data**. They are registered on every request with REST forced on, so a headless front end can use them immediately at `/wp-json/wp/v2/<rest_base>` (create, read, update, delete through WordPress core REST, with terms and typed `meta`). No PHP file is written, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. All routes need `manage_options`; changes are written to `agent-bridge-backups/audit.log`.
+Define custom post types, taxonomies and typed meta fields **as data**. They are registered on every request with REST forced on, so a headless front end can use them immediately at `/wp-json/wp/v2/<rest_base>` (create, read, update, delete through WordPress core REST, with terms and typed `meta`). No PHP file is written, so `AGENT_BRIDGE_ALLOW_FILE_WRITE` is **not** required. All routes need `manage_options`; changes are written to `audit.log` in the backup directory.
 
 | Method | Route | Description |
 |--------|-------|-------------|
@@ -775,6 +783,10 @@ define('AGENT_BRIDGE_CLI_OPEN', false);
 // WP-CLI: custom allowlist (used in allowlist mode only)
 define('AGENT_BRIDGE_CLI_ALLOWLIST', ['cache flush', 'cron event run --due-now']);
 
+// Where backups, audit.log and requests.log live. Point this OUTSIDE the web root.
+// Default: wp-content/agent-bridge-<random> (unguessable, with deny rules).
+define('AGENT_BRIDGE_BACKUP_DIR', '/var/lib/agent-bridge');
+
 // File writes under wp-content/{themes,plugins,mu-plugins,agent-apps} (disabled by default)
 define('AGENT_BRIDGE_ALLOW_FILE_WRITE', false);
 
@@ -788,6 +800,6 @@ define('AGENT_BRIDGE_DB_ALLOW_DDL', false); // enables DROP TABLE, TRUNCATE, ALT
 // Idempotency TTL in seconds (default 24 h)
 define('AGENT_BRIDGE_IDEMPOTENCY_TTL', 86400);
 
-// Request logging to wp-content/agent-bridge.log
+// Request logging to requests.log in the backup directory (not web-served)
 define('AGENT_BRIDGE_LOG_REQUESTS', true);
 ```

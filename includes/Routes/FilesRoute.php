@@ -6,6 +6,7 @@ use AgentBridge\Auth;
 use AgentBridge\Files\Backups;
 use AgentBridge\Files\PathGuard;
 use AgentBridge\Files\PhpGuard;
+use AgentBridge\Files\WriteGate;
 use AgentBridge\Idempotency;
 use AgentBridge\Response;
 
@@ -325,21 +326,16 @@ class FilesRoute {
 
     /** Resolve + all write-side gates. @return array|\WP_REST_Response */
     private static function resolve_writable( $path, bool $check_extension = true ) {
-        if ( ! ( defined( 'AGENT_BRIDGE_ALLOW_FILE_WRITE' ) && AGENT_BRIDGE_ALLOW_FILE_WRITE ) ) {
-            return Response::error( 'file_write_disabled', 'File writes are disabled. Set AGENT_BRIDGE_ALLOW_FILE_WRITE to true.', 403 );
-        }
-        if ( ( defined( 'DISALLOW_FILE_MODS' ) && DISALLOW_FILE_MODS ) || ( defined( 'DISALLOW_FILE_EDIT' ) && DISALLOW_FILE_EDIT && ! self::is_apps_path( $path ) ) ) {
-            return Response::error( 'file_edit_disabled', 'DISALLOW_FILE_EDIT / DISALLOW_FILE_MODS is set on this site.', 403 );
+        if ( $gate = WriteGate::check_site() ) {
+            return $gate;
         }
 
         $p = self::resolve( $path );
         if ( $p instanceof \WP_REST_Response ) {
             return $p;
         }
-
-        $cap = in_array( $p['root'], [ 'plugins', 'mu-plugins' ], true ) ? 'edit_plugins' : ( $p['root'] === 'themes' ? 'edit_themes' : 'manage_options' );
-        if ( ! current_user_can( $cap ) ) {
-            return Response::error( 'insufficient_capability', "Writing under '{$p['root']}' requires the {$cap} capability.", 403 );
+        if ( $gate = WriteGate::check_capability( $p['root'] ) ) {
+            return $gate;
         }
 
         if ( $check_extension ) {
@@ -349,10 +345,6 @@ class FilesRoute {
             }
         }
         return $p;
-    }
-
-    private static function is_apps_path( $path ): bool {
-        return is_string( $path ) && strpos( $path, 'agent-apps/' ) === 0;
     }
 
     private static function is_active_code_dir( string $rel ): bool {

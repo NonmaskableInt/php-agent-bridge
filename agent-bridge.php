@@ -67,8 +67,9 @@ if ( defined( 'AGENT_BRIDGE_LOG_REQUESTS' ) && AGENT_BRIDGE_LOG_REQUESTS ) {
                     $request->get_route(),
                     get_current_user_id()
                 );
+                // Not under a fixed, web-reachable name: see Files\Backups::dir().
                 file_put_contents(
-                    WP_CONTENT_DIR . '/agent-bridge.log',
+                    \AgentBridge\Files\Backups::dir( WP_CONTENT_DIR ) . '/requests.log',
                     $log_line,
                     FILE_APPEND | LOCK_EX
                 );

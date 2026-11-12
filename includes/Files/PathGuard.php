@@ -17,6 +17,12 @@ class PathGuard {
     /** The bridge must not be able to edit its own guardrails. */
     const PROTECTED_PREFIXES = [ 'plugins/php-agent-bridge', 'mu-plugins/agent-bridge' ];
 
+    /**
+     * Name parts that make a file executable on some server setups (Apache AddHandler / multi-extension
+     * matching). Refused in ANY position, so avatar.php.png is not a way around the extension allowlist.
+     */
+    const SCRIPT_PARTS = [ 'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'pht', 'phps', 'phar' ];
+
     /** Extensions an agent may write. Binary types need base64 encoding. */
     const WRITABLE_EXTENSIONS = [
         'php', 'js', 'mjs', 'css', 'json', 'html', 'htm', 'txt', 'md', 'xml', 'svg', 'map', 'twig',
@@ -100,7 +106,15 @@ class PathGuard {
         if ( in_array( $base, self::DENIED_BASENAMES, true ) ) {
             return "'{$base}' can never be written through the bridge.";
         }
-        $ext = strtolower( pathinfo( $base, PATHINFO_EXTENSION ) );
+        $ext   = strtolower( pathinfo( $base, PATHINFO_EXTENSION ) );
+        $parts = explode( '.', $base );
+        array_pop( $parts ); // the final extension is judged below
+        array_shift( $parts ); // the name itself is not an extension
+        foreach ( $parts as $part ) {
+            if ( in_array( $part, self::SCRIPT_PARTS, true ) ) {
+                return "'{$base}' contains a script extension (.{$part}) and is refused: it could be executed by some server configurations.";
+            }
+        }
         if ( ! in_array( $ext, self::WRITABLE_EXTENSIONS, true ) ) {
             return "Extension '.{$ext}' is not writable. Allowed: " . implode( ', ', self::WRITABLE_EXTENSIONS ) . '.';
         }

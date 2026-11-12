@@ -73,7 +73,7 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 - **Allowlist mode (default):** only commands matching a prefix in `AGENT_BRIDGE_CLI_ALLOWLIST` (or the built-in default list) are permitted.
 - **Open mode** (`AGENT_BRIDGE_CLI_OPEN=true`): any WP-CLI command is allowed, including plugin-registered subcommands. A hardcoded denylist (`db drop`, `db reset`, `db clean`, `site delete`, `core download`) is always enforced in both modes.
 
-`includes/Routes/FilesRoute.php` — read/write/delete files under `wp-content/{themes,plugins,mu-plugins,agent-apps}`; writes are off unless `AGENT_BRIDGE_ALLOW_FILE_WRITE` is `true`. Supporting classes in `includes/Files/`: `PathGuard` (path jail, protected paths incl. the bridge itself, write denylist/extension allowlist), `PhpGuard` (`php -l` lint + a separate-process WordPress boot as the health check; fails closed), `Backups` (versioned copies and `audit.log` in `wp-content/agent-bridge-backups/`). Every PHP write is linted, backed up, swapped atomically, health-checked, and rolled back if WordPress stops booting. Never weaken a guard without a contract test that fails when it is removed.
+`includes/Routes/FilesRoute.php` — read/write/delete files under `wp-content/{themes,plugins,mu-plugins,agent-apps}`; writes are off unless `AGENT_BRIDGE_ALLOW_FILE_WRITE` is `true`. Supporting classes in `includes/Files/`: `PathGuard` (path jail, protected paths incl. the bridge itself, write denylist/extension allowlist), `PhpGuard` (`php -l` lint + a separate-process WordPress boot as the health check; fails closed), `Backups` (versioned copies, `audit.log` and `requests.log` in a non-web-served directory — see `Backups::dir()`), `WriteGate` (the single place that decides if writes are allowed: opt-in constant, `DISALLOW_FILE_MODS`/`DISALLOW_FILE_EDIT` with no exemptions, per-root capabilities incl. `unfiltered_html` for agent-apps; used by both `/files` and `/apps`). Every PHP write is linted, backed up, swapped atomically, health-checked, and rolled back if WordPress stops booting. Never weaken a guard without a contract test that fails when it is removed.
 
 `includes/Routes/AppsRoute.php` — deploy built front-end bundles (zip) to `wp-content/agent-apps/{slug}/releases/` and serve the live release at a mount path. Supporting classes in `includes/Apps/`: `Archive` (validates every entry before extracting; no PHP, no hidden files, no symlinks, no traversal), `Registry` (option-backed app registry, reserved WordPress mounts, time-ordered release ids, pruning), `Server` (static serving on `template_redirect` priority 0, SPA fallback, never intercepts WordPress entry points). Same `AGENT_BRIDGE_ALLOW_FILE_WRITE` gate as `/files`.
 
@@ -85,7 +85,8 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 
 Define in `wp-config.php`:
 
-- `AGENT_BRIDGE_LOG_REQUESTS` — enable request logging to `wp-content/agent-bridge.log`
+- `AGENT_BRIDGE_LOG_REQUESTS` — enable request logging to `requests.log` in the backup directory
+- `AGENT_BRIDGE_BACKUP_DIR` — where backups, `audit.log` and `requests.log` live; set outside the web root (default: unguessable `wp-content/agent-bridge-<random>` with deny rules)
 - `AGENT_BRIDGE_IDEMPOTENCY_TTL` — idempotency key TTL in seconds (default: 86400)
 - `AGENT_BRIDGE_CLI_ALLOWLIST` — array of allowed WP-CLI command prefixes (allowlist mode)
 - `AGENT_BRIDGE_CLI_OPEN` — set `true` to allow any WP-CLI command (denylist-only mode)
