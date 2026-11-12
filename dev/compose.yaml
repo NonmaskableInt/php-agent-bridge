@@ -3,6 +3,7 @@ name: agent-bridge-dev
 services:
   db:
     image: docker.io/library/mariadb:11
+    container_name: agent-bridge-dev-db
     environment:
       MARIADB_DATABASE: wp
       MARIADB_USER: wp
@@ -14,6 +15,7 @@ services:
       retries: 30
   wp:
     image: docker.io/library/wordpress:6-php8.3-apache
+    container_name: agent-bridge-dev-wp # fixed, so the same name works with podman and docker compose
     depends_on:
       db:
         condition: service_healthy

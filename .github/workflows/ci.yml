@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: PHP lint (${{ matrix.php }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.0', '8.1', '8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - name: php -l on every PHP file
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            php -l "$f" >/dev/null || { php -l "$f"; status=1; }
+          done < <(find . -name '*.php' -not -path './.git/*' -print0)
+          exit $status
+
+  contract:
+    name: Contract tests (real WordPress)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bridge
+
+      # The tests live in wp-agent-mcp. Use its branch with the same name as this one when it exists
+      # (so paired PRs test each other), otherwise main.
+      - name: Pick the matching wp-agent-mcp branch
+        id: pair
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          if git ls-remote --exit-code --heads "https://github.com/${OWNER}/wp-agent-mcp.git" "$BRANCH" >/dev/null 2>&1; then
+            echo "ref=$BRANCH" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/wp-agent-mcp
+          ref: ${{ steps.pair.outputs.ref }}
+          path: mcp
+      - run: echo "Testing this bridge against wp-agent-mcp@${{ steps.pair.outputs.ref }}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: mcp
+
+      - name: Run the contract tests against this bridge
+        env:
+          CONTAINER_CLI: docker
+        run: bridge/dev/run-contract-tests.sh mcp

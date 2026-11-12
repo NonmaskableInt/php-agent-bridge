@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Installs WP into the dev stack, activates the bridge, prints an app password.
-# Usage: dev/bootstrap.sh   (stack must be up: podman compose -f dev/compose.yaml up -d)
+# Usage: dev/bootstrap.sh   (stack must be up: $CONTAINER_CLI compose -f dev/compose.yaml up -d)
+# CONTAINER_CLI selects the runtime (podman or docker); default: podman if installed, else docker.
 set -euo pipefail
+CLI="${CONTAINER_CLI:-$(command -v podman >/dev/null 2>&1 && echo podman || echo docker)}"
 NET=agent-bridge-dev_default
 VOL=agent-bridge-dev_wpdata
 PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 wpcli() {
-  podman run --rm --network "$NET" --user 33:33 \
+  "$CLI" run --rm --network "$NET" --user 33:33 \
     -v "$VOL":/var/www/html \
     -v "$PLUGIN_DIR":/var/www/html/wp-content/plugins/php-agent-bridge:ro \
     -e WORDPRESS_DB_HOST=db -e WORDPRESS_DB_NAME=wp -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp \
