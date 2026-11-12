@@ -110,6 +110,7 @@ add_action( 'rest_api_init', function (): void {
     \AgentBridge\Routes\TemplatesRoute::register();
     \AgentBridge\Routes\ThemeToolsRoute::register();
     \AgentBridge\Routes\GlobalStylesRoute::register();
+    \AgentBridge\Routes\StatusRoute::register();
 
     // Optional WooCommerce module — loaded only when WooCommerce is active
     if ( class_exists( 'WooCommerce' ) ) {

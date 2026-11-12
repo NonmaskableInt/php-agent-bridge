@@ -886,6 +886,44 @@ The Site Editor's **user-level `theme.json` layer** (the "Styles" panel: colours
 
 ---
 
+## Status
+
+What this bridge is and what it is allowed to do on this site: for diagnostics and for agents deciding what to attempt. Needs `manage_options`. Reports **that** things are enabled, never secrets, credentials or server paths.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/status` | Bridge version and route count; WordPress, PHP and theme details; the enabled features; the calling user's capabilities |
+
+```json
+{
+  "bridge":    { "version": "1.0.0", "namespace": "agent/v1", "routes": 62 },
+  "wordpress": { "version": "6.9.4", "multisite": false },
+  "php":       { "version": "8.3.31" },
+  "site":      { "url": "https://example.com", "theme": "twentytwentyfive", "theme_type": "block" },
+  "features": {
+    "file_write": true,            "file_edit_blocked": false,
+    "theme_install": false,        "plugin_install": false,
+    "cli": { "enabled": true, "mode": "allowlist" },
+    "db_api": false,               "content_model": true,
+    "option_groups": ["general", "reading", "discussion", "media"],
+    "legacy_option_list": false,   "backup_dir": "default",
+    "php_verification": true
+  },
+  "user": { "login": "agent", "roles": ["administrator"],
+            "can": { "manage_options": true, "edit_themes": true, "edit_plugins": true, "edit_theme_options": true, "unfiltered_html": true } }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `file_write` | `AGENT_BRIDGE_ALLOW_FILE_WRITE` is true |
+| `file_edit_blocked` | `DISALLOW_FILE_EDIT` or `DISALLOW_FILE_MODS` is set, so writes are refused even when `file_write` is true |
+| `cli.mode` | `allowlist` (default) or `open` (`AGENT_BRIDGE_CLI_OPEN`: bypasses the file guardrails) |
+| `backup_dir` | `custom` when `AGENT_BRIDGE_BACKUP_DIR` is set, else `default`. The path itself is never reported |
+| `php_verification` | A `php` binary and `proc_open` are available. When `false`, PHP writes and template resolving are refused (the bridge will not save PHP it cannot lint and boot-test); shared hosts sometimes lack them |
+
+---
+
 ## Global Error Codes
 
 | Code | HTTP | Meaning |
