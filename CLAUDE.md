@@ -109,6 +109,7 @@ Define in `wp-config.php`:
 - `AGENT_BRIDGE_CLI_ALLOWLIST` — array of allowed WP-CLI command prefixes (allowlist mode)
 - `AGENT_BRIDGE_CLI_OPEN` — set `true` to allow any WP-CLI command (denylist-only mode)
 - `AGENT_BRIDGE_ALLOW_FILE_WRITE` — set `true` to enable `/files` writes, deletes and restores (disabled by default)
+- `AGENT_BRIDGE_DISABLE_ALT_AUTH` — set `true` to stop accepting credentials in `X-Agent-Authorization` (a fallback for networks that strip `Authorization`; still needs a valid application password)
 - `AGENT_BRIDGE_DISABLE_CONTENT_MODEL` — set `true` to stop registering the stored content model (emergency switch)
 - `AGENT_BRIDGE_OPTION_GROUPS` — option groups exposed (default `general`, `reading`, `discussion`, `media`; also `permalinks`, `site_url`)
 - `AGENT_BRIDGE_ALLOWED_OPTIONS` — legacy explicit key list; replaces the groups when defined

@@ -52,6 +52,9 @@ register_deactivation_hook( __FILE__, function (): void {
 
 add_action( 'agent_bridge_cleanup_idempotency', [ \AgentBridge\Idempotency::class, 'cleanup' ] );
 
+// Runs at plugin load, before WordPress resolves the current user.
+\AgentBridge\AltAuth::boot();
+
 // -------------------------------------------------------------------------
 // Request logging
 // -------------------------------------------------------------------------
