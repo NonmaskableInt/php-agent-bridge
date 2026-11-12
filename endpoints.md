@@ -823,6 +823,40 @@ A theme counts as a block theme if it has `theme.json` or `templates/*.html`, ev
 
 ---
 
+## Global styles
+
+The Site Editor's **user-level `theme.json` layer** (the "Styles" panel: colours, typography, spacing, palettes). It lives in the database as a `wp_global_styles` post and **overrides the theme's own `theme.json`**, so editing `theme.json` can appear to do nothing. Needs a theme with `theme.json` (`no_theme_json` otherwise). Reads need `manage_options`; changes also need `edit_theme_options`. No files are written. Changes are audit-logged.
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/global-styles?include=theme` | The user layer (`user.settings`, `user.styles`, `has_customizations`, `post_id`); `include=theme` adds the `theme.json` defaults it overrides |
+| `POST` | `/global-styles` | Change styles. Merges by default |
+| `DELETE` | `/global-styles` | Remove all customisations (backed up first) |
+| `GET` | `/global-styles/backups` | Saved copies of removed customisations |
+| `POST` | `/global-styles/restore` | `{ "name": "<backup>" }` — bring one back (same theme only) |
+
+### POST /global-styles — body
+```json
+{ "styles": { "color": { "background": "#fff" }, "typography": { "fontSize": "18px" } },
+  "settings": { "color": { "palette": { "custom": [ { "slug": "brand", "name": "Brand", "color": "#12ab34" } ] } } },
+  "merge": true }
+```
+- `settings` / `styles` use `theme.json` structure. At least one is required; both must be objects; unknown fields are rejected (`422`); payload limit 200000 bytes.
+- **Merge** (default): objects merge key by key; **lists are replaced whole** (a palette, font families). `merge: false` replaces the given section outright.
+- **Only valid properties are saved.** WordPress silently ignores unknown properties; the bridge drops them *before* saving and returns their paths in `ignored` (e.g. `styles.color.notAProperty`), so the stored data matches what actually applies.
+- Palettes entered under `settings.color.palette.custom` become CSS variables (`--wp--preset--color--<slug>`) on the site.
+
+### Error codes
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `no_theme_json` | 409 | The active theme has no `theme.json` |
+| `no_customizations` | 409 | Reset requested but there is nothing to reset |
+| `validation_error` | 422 | Bad field/type, nothing to change, oversized, or a malformed backup name |
+| `wrong_theme` | 422 | Backup belongs to a different theme |
+| `backup_not_found` | 404 | No such backup |
+
+---
+
 ## Global Error Codes
 
 | Code | HTTP | Meaning |

@@ -87,6 +87,8 @@ Register new routes in `agent-bridge.php` inside the `rest_api_init` action.
 
 `includes/Routes/ThemeToolsRoute.php` + `includes/Themes/` — read-only validators. `BlockMarkup` checks the `<!-- wp:… -->` syntax with its own tokenizer (balance, JSON attributes, unregistered blocks, free-form HTML) because WordPress's parser silently accepts broken markup; `Validator` checks a theme's structure, `theme.json` (including which properties WordPress's sanitiser drops, found by diffing against `WP_Theme_JSON`), template-part references, and PHP syntax. `template_set` returns the markup check as `validation`.
 
+`includes/Routes/GlobalStylesRoute.php` + `includes/GlobalStyles/Store.php` — the Site Editor's user-level theme.json layer (a `wp_global_styles` post that overrides the theme's `theme.json`). Reads the post directly (no resolver cache), merges objects key-by-key (lists replaced), **sanitises through `WP_Theme_JSON` before saving and reports what was dropped**, and writes through core's REST controller. Backups are restored only by exact name pattern (`NAME_RE`), which is what stops path traversal into sibling backup folders — covered by a test using a real file.
+
 ## Configuration Constants
 
 Define in `wp-config.php`:

@@ -155,7 +155,7 @@ class Validator {
     }
 
     /** Dotted paths that exist in $input but were removed by WordPress's sanitiser. Lists are not compared. */
-    private static function dropped( array $input, $kept, string $path ): array {
+    public static function dropped( array $input, $kept, string $path ): array {
         $out = [];
         if ( array_values( $input ) === $input ) {
             return $out;
